@@ -1,55 +1,51 @@
 mod task;
 mod worker;
-mod notification;
 mod queue;
 mod errors;
 
-use notification::{call_api, send_email};
 use redis::Client;
 use serde_json::json;
 use tokio::sync::mpsc;
-use worker::execute_task;
-use task::Task;
+use std::sync::Arc;
+use task::BaseTask;
 use actix_web::{web, App, HttpResponse, HttpServer, Responder};
 use std::sync::Mutex;
+use reqwest::Client as HttpClient; // Import reqwest Client
 
 struct AppState {
     redis_client: Client,
 }
 
-async fn submit_task(data: web::Data<Mutex<AppState>>, task: web::Json<Task>) -> impl Responder {
-    let client = data.lock().unwrap().redis_client.clone();
-    match queue::enqueue_task(&client, &task.into_inner()).await {
+async fn submit_task(data: web::Data<Mutex<AppState>>, task: web::Json<BaseTask>) -> impl Responder {
+    let redis_client = data.lock().unwrap().redis_client.clone();
+    match queue::enqueue_task(&redis_client, &task.into_inner()).await {
         Ok(_) => HttpResponse::Ok().json(json!({"status": "Task submitted"})),
         Err(e) => HttpResponse::InternalServerError().json(json!({"error": e.to_string()})),
     }
 }
 
-
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     let redis_client = Client::open("redis://127.0.0.1/").expect("Invalid Redis URL");
-    let data = web::Data::new(Mutex::new(AppState { redis_client: redis_client.clone() }));
+    let http_client = HttpClient::new(); // Create a new HTTP client
+    let data = web::Data::new(Mutex::new(AppState {
+        redis_client: redis_client.clone(),
+    }));
 
-    let (tx, mut rx) = mpsc::channel(32);
+    let (tx, mut rx): (mpsc::Sender<BaseTask>, mpsc::Receiver<BaseTask>) = mpsc::channel(32);
 
+    // Spawning a task to process received tasks using the HTTPS client
+    let cloned_http_client = Arc::new(http_client);
     tokio::spawn(async move {
         while let Some(task) = rx.recv().await {
-            let result = execute_task(&task);
-            match result {
-                Ok(output) => {
-                    if let Some(email) = &task.notification_email {
-                        send_email(email, "Task Completed", &output);
-                    }
-                    if let Some(url) = &task.callback_url {
-                        call_api(url, &output).await;
-                    }
-                },
-                Err(err) => println!("Task failed: {}", err),
-            }
+            let client = Arc::clone(&cloned_http_client);
+            tokio::spawn(async move {
+                worker::execute_task(client, task).await; // Updated to use HTTPS client
+            });
         }
     });
 
+    // Spawning a task to fetch tasks from the Redis queue
     tokio::spawn(async move {
         loop {
             if let Ok(Some(task)) = queue::dequeue_task(&redis_client).await {

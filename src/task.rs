@@ -82,7 +82,7 @@ impl From<BaseTaskPayload> for BaseTask {
             priority: payload.priority,
             status: payload.status,
             task: payload.task,
-            periodic_details,
+            periodic_details
         }
     }
 }

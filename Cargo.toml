@@ -14,3 +14,5 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 lettre = "0.10.0-rc.2"
 reqwest = { version = "0.11", features = ["json"] }
+cron = "0.6"
+chrono = "0.4"
