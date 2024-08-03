@@ -1,7 +1,7 @@
 use redis::AsyncCommands;
 use crate::task::BaseTask;
 use crate::errors::TaskQueueError;
-use serde_json;
+
 
 
 pub async fn enqueue_task(client: &redis::Client, task: &BaseTask) -> Result<(), TaskQueueError> {

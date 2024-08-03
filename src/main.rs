@@ -1,24 +1,24 @@
-mod task;
-mod worker;
-mod queue;
-mod errors;
-
 use std::env;
 use redis::Client;
 use serde_json::json;
 use tokio::sync::mpsc;
 use std::sync::Arc;
-use task::BaseTask;
 use actix_web::{web, App, HttpResponse, HttpServer, Responder};
 use std::sync::Mutex;
 use reqwest::Client as HttpClient; // Import reqwest Client
+
+// local package imports
+use thermite::task::BaseTask;
+use thermite::worker;
+use thermite::queue;
 
 struct AppState {
     redis_client: Client,
 }
 
-async fn submit_task(data: web::Data<Mutex<AppState>>, task: web::Json<BaseTask>) -> impl Responder {
-    let redis_client = data.lock().unwrap().redis_client.clone();
+async fn submit_task(_data: web::Data<Mutex<AppState>>, task: web::Json<BaseTask>) -> impl Responder {
+    format!("Task received: {:?}", task);
+    let redis_client = _data.lock().unwrap().redis_client.clone();
     match queue::enqueue_task(&redis_client, &task.into_inner()).await {
         Ok(_) => HttpResponse::Ok().json(json!({"status": "Task submitted"})),
         Err(e) => HttpResponse::InternalServerError().json(json!({"error": e.to_string()})),
@@ -60,12 +60,17 @@ async fn main() -> std::io::Result<()> {
         }
     });
 
-    HttpServer::new(move || {
+    match HttpServer::new(move || {
         App::new()
             .app_data(data.clone())
-            .route(&env::var("TASKS_URI").unwrap_or_else(|_| "/submit-task".to_string()), web::post().to(submit_task))
+            .route("/submit-task",web::post().to(submit_task))
+            .default_service(web::route().to(|| HttpResponse::NotFound()))
     })
-    .bind(env::var("TASKS_URL").unwrap_or_else(|_| "127.0.0.1:8080".to_string()))?
-    .run()
-    .await
+    .bind(env::var("TASKS_URL").unwrap_or_else(|_| "127.0.0.1:8080".to_string())) {
+        Ok(server) => server.run().await,
+        Err(e) => {
+            eprintln!("Failed to bind server: {}", e);
+            return Err(e.into());
+        }
+    }
 }
