@@ -3,6 +3,7 @@ mod worker;
 mod queue;
 mod errors;
 
+use std::env;
 use redis::Client;
 use serde_json::json;
 use tokio::sync::mpsc;
@@ -26,7 +27,10 @@ async fn submit_task(data: web::Data<Mutex<AppState>>, task: web::Json<BaseTask>
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    let redis_client = Client::open("redis://127.0.0.1/").expect("Invalid Redis URL");
+    // Get the Redis URL from the environment variable
+    let redis_url = env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string());
+    // Create the Redis client
+    let redis_client = Client::open(redis_url.as_str()).expect("Invalid Redis URL");
     let http_client = HttpClient::new(); // Create a new HTTP client
     let data = web::Data::new(Mutex::new(AppState {
         redis_client: redis_client.clone(),
@@ -59,9 +63,9 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(move || {
         App::new()
             .app_data(data.clone())
-            .route("/submit_task", web::post().to(submit_task))
+            .route(&env::var("TASKS_URI").unwrap_or_else(|_| "/submit-task".to_string()), web::post().to(submit_task))
     })
-    .bind("127.0.0.1:8080")?
+    .bind(env::var("TASKS_URL").unwrap_or_else(|_| "127.0.0.1:8080".to_string()))?
     .run()
     .await
 }
