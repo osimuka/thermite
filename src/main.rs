@@ -5,7 +5,7 @@ use tokio::sync::mpsc;
 use std::sync::Arc;
 use actix_web::{web, App, HttpResponse, HttpServer, Responder};
 use std::sync::Mutex;
-use reqwest::Client as HttpClient; // Import reqwest Client
+use reqwest::Client as HttpClient;
 
 // local package imports
 use thermite::task::BaseTask;
@@ -23,6 +23,10 @@ async fn submit_task(_data: web::Data<Mutex<AppState>>, task: web::Json<BaseTask
         Ok(_) => HttpResponse::Ok().json(json!({"status": "Task submitted"})),
         Err(e) => HttpResponse::InternalServerError().json(json!({"error": e.to_string()})),
     }
+}
+
+async fn not_found() -> impl Responder {
+    HttpResponse::NotFound().json(json!({"error": "Not Found"}))
 }
 
 #[tokio::main]
@@ -64,7 +68,7 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .app_data(data.clone())
             .route("/submit-task",web::post().to(submit_task))
-            .default_service(web::route().to(|| HttpResponse::NotFound()))
+            .default_service(web::route().to(not_found))
     })
     .bind(env::var("TASKS_URL").unwrap_or_else(|_| "127.0.0.1:8080".to_string())) {
         Ok(server) => server.run().await,
