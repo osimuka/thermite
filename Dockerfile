@@ -28,9 +28,11 @@ RUN apt-get update && apt install -y openssl
 # Copy the build artifact from the build stage
 COPY --from=builder /thermite/target/release/thermite .
 
-# Set the necessary environment variables for runtime
-ENV REDIS_URL=redis://localhost:6379
-ENV TASKS_URL=0.0.0.0:8080
+# Copy the entrypoint script
+COPY entrypoint.sh /entrypoint.sh
+
+# Set the entrypoint script
+ENTRYPOINT ["/entrypoint.sh"]
 
 # Expose the port the server is listening on
 EXPOSE 8080

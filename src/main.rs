@@ -35,23 +35,16 @@ async fn main() -> std::io::Result<()> {
     let redis_url = env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string());
     // Create the Redis client
     let redis_client = Client::open(redis_url.as_str()).expect("Invalid Redis URL");
-    let http_client = HttpClient::new(); // Create a new HTTP client
+    // Create a new HTTP client allow for http requests
+    let http_client = HttpClient::new();
     let data = web::Data::new(Mutex::new(AppState {
         redis_client: redis_client.clone(),
     }));
 
     let (tx, mut rx): (mpsc::Sender<BaseTask>, mpsc::Receiver<BaseTask>) = mpsc::channel(32);
 
-    // Spawning a task to process received tasks using the HTTPS client
-    let cloned_http_client = Arc::new(http_client);
-    tokio::spawn(async move {
-        while let Some(task) = rx.recv().await {
-            let client = Arc::clone(&cloned_http_client);
-            tokio::spawn(async move {
-                worker::execute_task(client, task).await; // Updated to use HTTPS client
-            });
-        }
-    });
+    // Clear the task queue before starting/restarting the server
+    queue::clear_task_queue(&redis_client).await.unwrap();
 
     // Spawning a task to fetch tasks from the Redis queue
     tokio::spawn(async move {
@@ -61,6 +54,19 @@ async fn main() -> std::io::Result<()> {
             } else {
                 tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
             }
+        }
+    });
+
+    // Spawning a task to process received tasks using the HTTPS client
+    let cloned_http_client = Arc::new(http_client);
+    tokio::spawn(async move {
+        while let Some(task) = rx.recv().await {
+            let client = Arc::clone(&cloned_http_client);
+            let handle = tokio::spawn(async move {
+                worker::execute_task(client, task).await; // Updated to use HTTPS client
+            });
+            let out = handle.await.unwrap();
+            println!("Task executed: {:?}", out);
         }
     });
 
