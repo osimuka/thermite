@@ -23,7 +23,7 @@ RUN cargo build --release
 # Final base image
 FROM debian:bookworm-slim
 
-RUN apt-get update && apt install -y openssl
+RUN apt-get update && apt install -y openssl libssl-dev ca-certificates tzdata && rm -rf /var/lib/apt/lists/*
 
 # Copy the build artifact from the build stage
 COPY --from=builder /thermite/target/release/thermite .

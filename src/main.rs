@@ -63,10 +63,13 @@ async fn main() -> std::io::Result<()> {
         while let Some(task) = rx.recv().await {
             let client = Arc::clone(&cloned_http_client);
             let handle = tokio::spawn(async move {
-                worker::execute_task(client, task).await; // Updated to use HTTPS client
+                let _ = worker::execute_task(client, task).await?;
+                Ok::<(), reqwest::Error>(())
             });
-            let out = handle.await.unwrap();
-            println!("Task executed: {:?}", out);
+            match handle.await {
+                Ok(res) => println!("Task executed successfully {:?}", res),
+                Err(e) => eprintln!("Failed to execute task: {}", e),
+            }
         }
     });
 
