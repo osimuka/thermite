@@ -1,9 +1,8 @@
 use std::env;
 use redis::Client;
-use serde_json::json;
 use tokio::sync::mpsc;
 use std::sync::Arc;
-use actix_web::{web, App, HttpResponse, HttpServer, Responder};
+use actix_web::{web, App, HttpServer};
 use std::sync::Mutex;
 use reqwest::Client as HttpClient;
 
@@ -11,23 +10,8 @@ use reqwest::Client as HttpClient;
 use thermite::task::BaseTask;
 use thermite::worker;
 use thermite::queue;
+use thermite::handlers::{AppState, submit_task, submit_tasks, not_found};
 
-struct AppState {
-    redis_client: Client,
-}
-
-async fn submit_task(_data: web::Data<Mutex<AppState>>, task: web::Json<BaseTask>) -> impl Responder {
-    format!("Task received: {:?}", task);
-    let redis_client = _data.lock().unwrap().redis_client.clone();
-    match queue::enqueue_task(&redis_client, &task.into_inner()).await {
-        Ok(_) => HttpResponse::Ok().json(json!({"status": "Task submitted"})),
-        Err(e) => HttpResponse::InternalServerError().json(json!({"error": e.to_string()})),
-    }
-}
-
-async fn not_found() -> impl Responder {
-    HttpResponse::NotFound().json(json!({"error": "Not Found"}))
-}
 
 async fn start_receiver(redis_client: Client, http_client: HttpClient, data: web::Data<Mutex<AppState>>, tx: mpsc::Sender<BaseTask>, mut rx: mpsc::Receiver<BaseTask>) -> std::io::Result<()> {
     // Clear the task queue before starting/restarting the server
@@ -64,6 +48,7 @@ async fn start_receiver(redis_client: Client, http_client: HttpClient, data: web
         App::new()
             .app_data(data.clone())
             .route("/submit-task",web::post().to(submit_task))
+            .route("/submit-tasks",web::post().to(submit_tasks))
             .default_service(web::route().to(not_found))
     })
     .bind(env::var("THERMITE_TASKS_URL").unwrap_or_else(|_| "127.0.0.1:8080".to_string())) {
@@ -86,6 +71,15 @@ async fn start_fetcher(redis_client: Client, http_client: HttpClient, data: web:
     tokio::spawn(async move {
         loop {
             if let Ok(Some(task)) = queue::dequeue_task(&redis_client).await {
+                // Calculate the duration to sleep until the task execution time
+                let now = chrono::Utc::now().timestamp() as u64;
+                let task_time = task.cron_string_to_unix_timestamp();
+                let sleep_duration = if task_time > now {
+                    task_time - now
+                } else {
+                    0
+                };
+                tokio::time::sleep(tokio::time::Duration::from_secs(sleep_duration)).await;
                 tx.send(task).await.unwrap();
             } else {
                 tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
