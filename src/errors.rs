@@ -9,4 +9,13 @@ pub enum TaskQueueError {
 
     #[error("Serialization/Deserialization error: {0}")]
     Serde(#[from] SerdeError),
+
+    #[error("Connection error: {0}")]
+    ConnectionError(String),
+
+    #[error("Redis error: {0}")]
+    RedisError(String),
+
+    #[error("Serialization error: {0}")]
+    SerializationError(String),
 }
