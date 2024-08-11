@@ -5,12 +5,12 @@ use chrono::Utc;
 
 
 pub async fn enqueue_task(client: &redis::Client, task: &BaseTask) -> Result<(), TaskQueueError> {
-    let mut conn = client.get_async_connection().await.expect("Failed to connect to Redis");
+    let mut conn = client.get_multiplexed_async_connection().await.expect("Failed to connect to Redis");
     let task_json = serde_json::to_string(&task).expect("Failed to serialize task");
 
     println!("Enqueuing task: {}", task_json);
 
-    // Set the task using SETNX to avoid overwriting existing tasks
+    // Add the task to the queue
     let was_set: bool = conn.zadd("task_queue", task_json, task.cron_string_to_unix_timestamp()).await?;
     if !was_set {
         println!("Task {} already exists, not enqueued again", task.id);
@@ -21,7 +21,7 @@ pub async fn enqueue_task(client: &redis::Client, task: &BaseTask) -> Result<(),
 }
 
 pub async fn dequeue_task(client: &redis::Client) -> Result<Option<BaseTask>, TaskQueueError> {
-    let mut conn = client.get_async_connection().await?;
+    let mut conn = client.get_multiplexed_async_connection().await?;
     // Get the current time as a Unix timestamp
     let now = Utc::now().timestamp() as u64;
     // get first task from the queue
@@ -46,7 +46,7 @@ pub async fn dequeue_task(client: &redis::Client) -> Result<Option<BaseTask>, Ta
 }
 
 pub async fn clear_task_queue(client: &redis::Client) -> Result<(), TaskQueueError> {
-    let mut conn = client.get_async_connection().await?;
+    let mut conn = client.get_multiplexed_async_connection().await?;
     let _: () = conn.del("task_queue").await?;
     Ok(())
 }

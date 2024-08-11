@@ -80,7 +80,7 @@ async fn start_fetcher(redis_client: Client, http_client: HttpClient, data: web:
                     0
                 };
                 tokio::time::sleep(tokio::time::Duration::from_secs(sleep_duration)).await;
-                tx.send(task).await.unwrap();
+                tx.send(task).await.unwrap_or_default();
             } else {
                 tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
             }
