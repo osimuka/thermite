@@ -24,11 +24,11 @@ pub async fn dequeue_task(client: &redis::Client) -> Result<Option<BaseTask>, Ta
     let mut conn = client.get_multiplexed_async_connection().await?;
     // Get the current time as a Unix timestamp
     let now = Utc::now().timestamp() as u64;
-    // get first task from the queue
+    // get first task from the queue based on the score (timestamp)
     let task_json: Option<String> = conn
-    .zrangebyscore("task_queue", 0, now)
-    .await
-    .unwrap_or_else(|_| vec![]).first().cloned();
+        .zrangebyscore_withscores("task_queue", "-inf", now)
+        .await
+        .unwrap_or_else(|_| vec![]).first().cloned();
 
     // Remove the task from the queue
     if let Some(task_str) = &task_json {
@@ -37,11 +37,13 @@ pub async fn dequeue_task(client: &redis::Client) -> Result<Option<BaseTask>, Ta
 
     println!("Dequeued task: {}", task_json.as_deref().unwrap_or("None"));
 
-    if let Some(task_str) = task_json {
-        let task: BaseTask = serde_json::from_str(&task_str)?;
-        Ok(Some(task))
-    } else {
-        Ok(None)
+    // Deserialize and return the task if found
+    match task_json {
+        Some(task_str) => {
+            let task: BaseTask = serde_json::from_str(&task_str)?;
+            Ok(Some(task))
+        },
+        None => Ok(None)
     }
 }
 

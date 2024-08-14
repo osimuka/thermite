@@ -21,8 +21,9 @@ async fn start_receiver(redis_client: Client, http_client: HttpClient, data: web
     tokio::spawn(async move {
         loop {
             if let Ok(Some(task)) = queue::dequeue_task(&redis_client).await {
-                tx.send(task).await.unwrap();
+                tx.send(task).await.unwrap_or_default();
             } else {
+                // Sleep for a second if there are no tasks in the queue
                 tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
             }
         }
@@ -71,17 +72,9 @@ async fn start_fetcher(redis_client: Client, http_client: HttpClient, data: web:
     tokio::spawn(async move {
         loop {
             if let Ok(Some(task)) = queue::dequeue_task(&redis_client).await {
-                // Calculate the duration to sleep until the task execution time
-                let now = chrono::Utc::now().timestamp() as u64;
-                let task_time = task.cron_string_to_unix_timestamp();
-                let sleep_duration = if task_time > now {
-                    task_time - now
-                } else {
-                    0
-                };
-                tokio::time::sleep(tokio::time::Duration::from_secs(sleep_duration)).await;
                 tx.send(task).await.unwrap_or_default();
             } else {
+                // Sleep for a second if there are no tasks in the queue
                 tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
             }
         }

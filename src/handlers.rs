@@ -20,6 +20,7 @@ pub async fn submit_task(_data: web::Data<Mutex<AppState>>, task: web::Json<Base
 
 pub async fn submit_tasks(_data: web::Data<Mutex<AppState>>, tasks: web::Json<Vec<BaseTask>>) -> impl Responder {
     for task in tasks.into_inner() {
+        format!("Task received: {:?}", task);
         let redis_client = _data.lock().unwrap().redis_client.clone();
         match queue::enqueue_task(&redis_client, &task).await {
             Ok(_) => println!("Task enqueued: {}", task.id),
