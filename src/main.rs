@@ -24,6 +24,7 @@ async fn start_receiver(redis_client: Client, http_client: HttpClient, data: web
                 tx.send(task).await.unwrap_or_default();
             } else {
                 // Sleep for a second if there are no tasks in the queue
+                println!("No tasks in the queue");
                 tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
             }
         }
@@ -56,14 +57,14 @@ async fn start_receiver(redis_client: Client, http_client: HttpClient, data: web
         Ok(server) => server.run().await,
         Err(e) => {
             eprintln!("Failed to bind server: {}", e);
-            return Err(e.into());
+            Err(e)
         }
     }
 }
 
 async fn start_fetcher(redis_client: Client, http_client: HttpClient, data: web::Data<Mutex<AppState>>, tx: mpsc::Sender<BaseTask>, mut rx: mpsc::Receiver<BaseTask>) -> std::io::Result<()> {
     // Get the URL to fetch tasks from
-    let fetch_url = env::var("THERMITE_FETCH_URL").expect("FETCH_URL must be set");
+    let fetch_url = env::var("THERMITE_FETCH_URL").expect("THERMITE_FETCH_URL must be set");
 
     // Clear the task queue before starting/restarting the server
     let _ = queue::clear_task_queue(&redis_client).await;
@@ -75,6 +76,7 @@ async fn start_fetcher(redis_client: Client, http_client: HttpClient, data: web:
                 tx.send(task).await.unwrap_or_default();
             } else {
                 // Sleep for a second if there are no tasks in the queue
+                println!("No tasks in the queue");
                 tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
             }
         }
@@ -123,7 +125,7 @@ async fn main() -> std::io::Result<()> {
     // Get the mode from the environment variable
     let mode = env::var("THERMITE_MODE").unwrap_or_else(|_| "receiver".to_string());
     // Get the Redis URL from the environment variable
-    let redis_url = env::var("THERMITE_REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string());
+    let redis_url = env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string());
     // Create the Redis client
     let redis_client = Client::open(redis_url.as_str()).expect("Invalid Redis URL");
     // Create a new HTTP client allow for http requests

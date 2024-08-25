@@ -13,7 +13,8 @@ pub struct BaseTask {
     pub category: String,
     pub priority: String,
     pub task: String,
-    pub scheduled_at: Option<CRONShedule>
+    pub scheduled_at: Option<u64>,
+    pub cron_sheduled_at: Option<CRONShedule>
 }
 
 
@@ -26,7 +27,8 @@ pub struct BaseTaskPayload {
     pub category: String,
     pub priority: String,
     pub task: String,
-    pub scheduled_at: Option<CRONShedule>
+    pub scheduled_at: Option<u64>,
+    pub cron_sheduled_at: Option<CRONShedule>
 }
 
 impl From<BaseTaskPayload> for BaseTask {
@@ -39,13 +41,14 @@ impl From<BaseTaskPayload> for BaseTask {
             priority: payload.priority,
             task: payload.task,
             scheduled_at: payload.scheduled_at,
+            cron_sheduled_at: payload.cron_sheduled_at
         }
     }
 }
 
 impl BaseTask {
     pub fn cron_string_to_unix_timestamp(&self) -> u64 {
-        if let Some(cron) = &self.scheduled_at {
+        if let Some(cron) = &self.cron_sheduled_at {
             let schedule_parts: Vec<&str> = cron.split_whitespace().collect();
             if schedule_parts.len() != 5 {
                 return Utc::now().timestamp() as u64;

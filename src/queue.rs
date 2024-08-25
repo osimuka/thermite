@@ -25,25 +25,26 @@ pub async fn dequeue_task(client: &redis::Client) -> Result<Option<BaseTask>, Ta
     // Get the current time as a Unix timestamp
     let now = Utc::now().timestamp() as u64;
     // get first task from the queue based on the score (timestamp)
-    let task_json: Option<String> = conn
+    let task_str: Option<String> = conn
         .zrangebyscore_withscores("task_queue", "-inf", now)
         .await
         .unwrap_or_else(|_| vec![]).first().cloned();
 
-    // Remove the task from the queue
-    if let Some(task_str) = &task_json {
-        let _: () = conn.zrem("task_queue", task_str).await?;
+    if task_str.is_none() {
+        return Ok(None);
     }
 
-    println!("Dequeued task: {}", task_json.as_deref().unwrap_or("None"));
+    let task: BaseTask = serde_json::from_str(&task_str.clone().unwrap())?;
 
-    // Deserialize and return the task if found
-    match task_json {
-        Some(task_str) => {
-            let task: BaseTask = serde_json::from_str(&task_str)?;
-            Ok(Some(task))
-        },
-        None => Ok(None)
+    // check if task is equal or greater than the current time
+    if task.cron_string_to_unix_timestamp() >= now {
+        // Remove the task from the queue
+        let _: () = conn.zrem("task_queue", &task_str).await?;
+        println!("Dequeued task: {}", task_str.as_deref().unwrap_or("None"));
+        // Return the task
+        Ok(Some(task))
+    } else {
+        Ok(None)
     }
 }
 
