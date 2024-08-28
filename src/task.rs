@@ -14,7 +14,8 @@ pub struct BaseTask {
     pub priority: String,
     pub task: String,
     pub scheduled_at: Option<u64>,
-    pub cron_sheduled_at: Option<CRONShedule>
+    pub cron_sheduled_at: Option<CRONShedule>,
+    pub args: Option<std::collections::HashMap<String, serde_json::Value>>,
 }
 
 
@@ -28,7 +29,9 @@ pub struct BaseTaskPayload {
     pub priority: String,
     pub task: String,
     pub scheduled_at: Option<u64>,
-    pub cron_sheduled_at: Option<CRONShedule>
+    pub cron_sheduled_at: Option<CRONShedule>,
+    pub args: Option<std::collections::HashMap<String, serde_json::Value>>,
+
 }
 
 impl From<BaseTaskPayload> for BaseTask {
@@ -41,7 +44,8 @@ impl From<BaseTaskPayload> for BaseTask {
             priority: payload.priority,
             task: payload.task,
             scheduled_at: payload.scheduled_at,
-            cron_sheduled_at: payload.cron_sheduled_at
+            cron_sheduled_at: payload.cron_sheduled_at,
+            args: payload.args,
         }
     }
 }

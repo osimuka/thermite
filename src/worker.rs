@@ -11,7 +11,7 @@ pub async fn execute_task(client: Arc<Client>, task: BaseTask) -> Result<Respons
     let task_clone = task.clone();
 
     client_clone.post(&task_clone.task)
-        .json(&json!({ "task_id": task_clone.id }))
+        .json(&json!({ "task_id": task_clone.id, "args": task_clone.args }))
         .send()
         .await
 }
