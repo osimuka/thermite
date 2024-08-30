@@ -21,7 +21,7 @@ pub async fn enqueue_task(client: &redis::Client, task: &BaseTask) -> Result<(),
 }
 
 pub async fn dequeue_task(client: &redis::Client) -> Result<Option<BaseTask>, TaskQueueError> {
-    let mut conn = client.get_multiplexed_async_connection().await?;
+    let mut conn = client.get_multiplexed_async_connection().await.expect("Failed to connect to Redis");
     // Get the current time as a Unix timestamp
     let now = Utc::now().timestamp() as u64;
     // get first task from the queue based on the score (timestamp)

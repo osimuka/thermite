@@ -29,13 +29,11 @@ RUN apt-get update && apt install -y openssl libssl-dev ca-certificates tzdata &
 COPY --from=builder /thermite/target/release/thermite .
 
 # Copy the entrypoint script
-COPY entrypoint.sh /entrypoint.sh
 
-# Set the entrypoint script
-ENTRYPOINT ["/entrypoint.sh"]
+COPY entrypoint.sh /entrypoint.sh
 
 # Expose the port the server is listening on
 EXPOSE 8080
 
-# Run the binary
-CMD ["./thermite"]
+# Run the service
+CMD ["/entrypoint.sh"]

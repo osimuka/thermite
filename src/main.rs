@@ -1,4 +1,5 @@
 use std::env;
+use clap::{Arg, Command, ArgAction};
 use redis::Client;
 use tokio::sync::mpsc;
 use std::sync::Arc;
@@ -53,7 +54,7 @@ async fn start_receiver(redis_client: Client, http_client: HttpClient, data: web
             .route("/submit-tasks",web::post().to(submit_tasks))
             .default_service(web::route().to(not_found))
     })
-    .bind(env::var("THERMITE_TASKS_URL").unwrap_or_else(|_| "127.0.0.1:8080".to_string())) {
+    .bind(env::var("TASKS_URL").unwrap_or_else(|_| "127.0.0.1:8080".to_string())) {
         Ok(server) => server.run().await,
         Err(e) => {
             eprintln!("Failed to bind server: {}", e);
@@ -64,7 +65,7 @@ async fn start_receiver(redis_client: Client, http_client: HttpClient, data: web
 
 async fn start_fetcher(redis_client: Client, http_client: HttpClient, data: web::Data<Mutex<AppState>>, tx: mpsc::Sender<BaseTask>, mut rx: mpsc::Receiver<BaseTask>) -> std::io::Result<()> {
     // Get the URL to fetch tasks from
-    let fetch_url = env::var("THERMITE_FETCH_URL").expect("THERMITE_FETCH_URL must be set");
+    let fetch_url = env::var("FETCH_URL").expect("FETCH_URL must be set");
 
     // Clear the task queue before starting/restarting the server
     let _ = queue::clear_task_queue(&redis_client).await;
@@ -120,12 +121,49 @@ async fn start_fetcher(redis_client: Client, http_client: HttpClient, data: web:
     }
 }
 
+
+fn cli() -> Command {
+    Command::new("thermite")
+        .version("1.0")
+        .author("Uka Osim <hsojo91@gmail.com>")
+        .about("Runs tasks either as a receiver or fetcher")
+        .arg(Arg::new("mode")
+            .short('m')
+            .long("mode")
+            .help("Sets the operation mode of the application")
+            .action(ArgAction::Set)
+            .value_name("MODE")
+            .value_parser(["receiver", "fetcher"])
+            .default_value("receiver")
+            .required(true))
+        .arg(Arg::new("redis-url")
+            .short('r')
+            .long("redis-url")
+            .help("Sets the Redis server URL")
+            .action(ArgAction::Set)
+            .value_name("REDIS_URL")
+            // .required(true)  // If you want this to be always required
+            .default_value("redis://localhost:6379"))
+        .arg(Arg::new("tasks-url")
+            .short('t')
+            .long("tasks-url")
+            .help("Sets the URL to listen for tasks")
+            .action(ArgAction::Set)
+            .value_name("TASKS_URL")
+            .requires_if("receiver", "mode")
+            .default_value("localhost:8080"))
+}
+
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    // Get the mode from the environment variable
-    let mode = env::var("THERMITE_MODE").unwrap_or_else(|_| "receiver".to_string());
-    // Get the Redis URL from the environment variable
-    let redis_url = env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string());
+
+    let matches = cli().get_matches();
+
+    let mode = matches.get_one::<String>("mode").unwrap();
+
+    let default_redis_url = env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string());
+    let redis_url = matches.get_one::<String>("redis-url").unwrap_or(&default_redis_url);
+
     // Create the Redis client
     let redis_client = Client::open(redis_url.as_str()).expect("Invalid Redis URL");
     // Create a new HTTP client allow for http requests
