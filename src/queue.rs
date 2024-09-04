@@ -37,7 +37,7 @@ pub async fn dequeue_task(client: &redis::Client) -> Result<Option<BaseTask>, Ta
     let task: BaseTask = serde_json::from_str(&task_str.clone().unwrap())?;
 
     // check if task is less than or equal to the current time
-    if task.cron_string_to_unix_timestamp() <= now {
+    if task.cron_string_to_unix_timestamp() <= now as i64 {
         // Remove the task from the queue
         let _: () = conn.zrem("task_queue", &task_str).await?;
         println!("Dequeued task: {}", task_str.as_deref().unwrap_or("None"));
