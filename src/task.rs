@@ -10,8 +10,8 @@ pub struct BaseTask {
     pub category: String,
     pub priority: String,
     pub task: String,
-    pub scheduled_at: Option<u64>,
-    pub cron_sheduled_at: Option<String>,
+    pub scheduled_at: u64,
+    pub cron_sheduled_at: String,
     pub args: Option<std::collections::HashMap<String, serde_json::Value>>,
 }
 
@@ -40,8 +40,8 @@ impl From<BaseTaskPayload> for BaseTask {
             category: payload.category,
             priority: payload.priority,
             task: payload.task,
-            scheduled_at: Some(payload.scheduled_at),
-            cron_sheduled_at: Some(payload.cron_sheduled_at),
+            scheduled_at: payload.scheduled_at,
+            cron_sheduled_at: payload.cron_sheduled_at,
             args: payload.args,
         }
     }
@@ -49,7 +49,7 @@ impl From<BaseTaskPayload> for BaseTask {
 
 impl BaseTask {
     pub fn cron_string_to_unix_timestamp(&self) -> i64 {
-        let cron_schedule = self.cron_sheduled_at.as_ref().unwrap();
+        let cron_schedule = self.cron_sheduled_at.as_str();
         let mut schedule = Schedule::parse(cron_schedule).unwrap();
         let next = schedule.next().unwrap();
         next.timestamp()
