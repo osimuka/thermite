@@ -2,7 +2,6 @@ use std::str::FromStr;
 use chrono::Utc;
 use cron::Schedule;
 use serde::{Deserialize, Serialize};
-use astrolabe::CronSchedule;
 
 type CRONShedule = String;
 
