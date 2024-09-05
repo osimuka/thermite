@@ -47,6 +47,21 @@ impl From<BaseTaskPayload> for BaseTask {
     }
 }
 
+/// Converts a cron string to a Unix timestamp.
+///
+/// # Returns
+///
+/// The Unix timestamp representing the next occurrence of the cron schedule.
+///
+/// # Example
+///
+/// ```
+/// use thermite::task::BaseTask;
+///
+/// let task = BaseTask::new();
+/// let timestamp = task.cron_string_to_unix_timestamp();
+/// println!("Next occurrence: {}", timestamp);
+/// ```
 impl BaseTask {
     pub fn cron_string_to_unix_timestamp(&self) -> i64 {
         let cron_schedule = self.cron_sheduled_at.as_str();
