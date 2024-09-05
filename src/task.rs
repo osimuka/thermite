@@ -1,7 +1,5 @@
-use std::str::FromStr;
-use chrono::Utc;
-use cron::Schedule;
 use serde::{Deserialize, Serialize};
+use astrolabe::{CronSchedule as Schedule, DateUtilities};
 
 type CRONShedule = String;
 
@@ -53,8 +51,8 @@ impl From<BaseTaskPayload> for BaseTask {
 impl BaseTask {
     pub fn cron_string_to_unix_timestamp(&self) -> i64 {
         let cron_schedule = self.cron_sheduled_at.as_ref().unwrap();
-        let schedule = Schedule::from_str(cron_schedule).unwrap();
-        let next = schedule.upcoming(Utc).next().unwrap();
+        let mut schedule = Schedule::parse(cron_schedule).unwrap();
+        let next = schedule.next().unwrap();
         next.timestamp()
     }
 }
