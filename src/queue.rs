@@ -41,7 +41,7 @@ pub async fn dequeue_task(client: &redis::Client) -> Result<Option<BaseTask>, Ta
     let now_datetime = Utc::now();
     let now_timestamp = now_datetime.timestamp() as i64;
 
-    if task_timestamp == now_timestamp {
+    if task_timestamp <= now_timestamp {
         // Remove the task from the queue
         let _: () = conn.zrem("task_queue", &task_str).await?;
         println!("Dequeued task: {}", task_str.as_deref().unwrap_or("None"));

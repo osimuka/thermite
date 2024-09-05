@@ -2,6 +2,7 @@ use std::str::FromStr;
 use chrono::Utc;
 use cron::Schedule;
 use serde::{Deserialize, Serialize};
+use astrolabe::CronSchedule;
 
 type CRONShedule = String;
 
@@ -52,32 +53,9 @@ impl From<BaseTaskPayload> for BaseTask {
 
 impl BaseTask {
     pub fn cron_string_to_unix_timestamp(&self) -> i64 {
-        if let Some(cron) = &self.cron_sheduled_at {
-            let schedule_parts: Vec<&str> = cron.split_whitespace().collect();
-            if schedule_parts.len() != 5 {
-                return Utc::now().timestamp();
-            }
-
-            // Insert "0" at the beginning for seconds
-            let mut schedule_with_seconds: Vec<String> = schedule_parts.iter().map(|s| s.to_string()).collect();
-            schedule_with_seconds.insert(0, "0".to_string());
-
-            // Combine the parts back into a single string
-            let cron_expression = schedule_with_seconds.join(" ");
-
-            // Parse the CRON expression into a Schedule
-            let schedule = match Schedule::from_str(&cron_expression) {
-                Ok(s) => s,
-                Err(_) => return Utc::now().timestamp(), // Default to current time on error
-            };
-
-            // Find the next time the schedule will trigger
-            match schedule.upcoming(Utc).next() {
-                Some(next_time) => next_time.timestamp(),
-                None => Utc::now().timestamp(), // Default to current time if no next time is found
-            }
-        } else {
-            Utc::now().timestamp()
-        }
+        let cron_schedule = self.cron_sheduled_at.as_ref().unwrap();
+        let schedule = Schedule::from_str(cron_schedule).unwrap();
+        let next = schedule.upcoming(Utc).next().unwrap();
+        next.timestamp()
     }
 }
