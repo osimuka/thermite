@@ -50,7 +50,8 @@ impl From<BaseTaskPayload> for BaseTask {
 
 impl BaseTask {
     pub fn cron_string_to_unix_timestamp(&self) -> i64 {
-        let cron_schedule = self.cron_sheduled_at.as_ref().unwrap();
+        let binding = "".to_string();
+        let cron_schedule = self.cron_sheduled_at.as_ref().unwrap_or(&binding);
         let mut schedule = Schedule::parse(cron_schedule).unwrap();
         let next = schedule.next().unwrap();
         next.timestamp()
