@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use astrolabe::{CronSchedule as Schedule, DateUtilities};
 
-type CRONShedule = String;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BaseTask {
@@ -12,7 +11,7 @@ pub struct BaseTask {
     pub priority: String,
     pub task: String,
     pub scheduled_at: Option<u64>,
-    pub cron_sheduled_at: Option<CRONShedule>,
+    pub cron_sheduled_at: Option<String>,
     pub args: Option<std::collections::HashMap<String, serde_json::Value>>,
 }
 
@@ -26,8 +25,8 @@ pub struct BaseTaskPayload {
     pub category: String,
     pub priority: String,
     pub task: String,
-    pub scheduled_at: Option<u64>,
-    pub cron_sheduled_at: Option<CRONShedule>,
+    pub scheduled_at: u64,
+    pub cron_sheduled_at: String,
     pub args: Option<std::collections::HashMap<String, serde_json::Value>>,
 
 }
@@ -41,8 +40,8 @@ impl From<BaseTaskPayload> for BaseTask {
             category: payload.category,
             priority: payload.priority,
             task: payload.task,
-            scheduled_at: payload.scheduled_at,
-            cron_sheduled_at: payload.cron_sheduled_at,
+            scheduled_at: Some(payload.scheduled_at),
+            cron_sheduled_at: Some(payload.cron_sheduled_at),
             args: payload.args,
         }
     }
@@ -50,8 +49,7 @@ impl From<BaseTaskPayload> for BaseTask {
 
 impl BaseTask {
     pub fn cron_string_to_unix_timestamp(&self) -> i64 {
-        let binding = "".to_string();
-        let cron_schedule = self.cron_sheduled_at.as_ref().unwrap_or(&binding);
+        let cron_schedule = self.cron_sheduled_at.as_ref().unwrap();
         let mut schedule = Schedule::parse(cron_schedule).unwrap();
         let next = schedule.next().unwrap();
         next.timestamp()
