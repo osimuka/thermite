@@ -51,11 +51,11 @@ impl From<BaseTaskPayload> for BaseTask {
 }
 
 impl BaseTask {
-    pub fn cron_string_to_unix_timestamp(&self) -> u64 {
+    pub fn cron_string_to_unix_timestamp(&self) -> i64 {
         if let Some(cron) = &self.cron_sheduled_at {
             let schedule_parts: Vec<&str> = cron.split_whitespace().collect();
             if schedule_parts.len() != 5 {
-                return Utc::now().timestamp() as u64;
+                return Utc::now().timestamp();
             }
 
             // Insert "0" at the beginning for seconds
@@ -68,16 +68,16 @@ impl BaseTask {
             // Parse the CRON expression into a Schedule
             let schedule = match Schedule::from_str(&cron_expression) {
                 Ok(s) => s,
-                Err(_) => return Utc::now().timestamp() as u64, // Default to current time on error
+                Err(_) => return Utc::now().timestamp(), // Default to current time on error
             };
 
             // Find the next time the schedule will trigger
             match schedule.upcoming(Utc).next() {
-                Some(next_time) => next_time.timestamp() as u64,
-                None => Utc::now().timestamp() as u64, // Default to current time if no next time is found
+                Some(next_time) => next_time.timestamp(),
+                None => Utc::now().timestamp(), // Default to current time if no next time is found
             }
         } else {
-            Utc::now().timestamp() as u64
+            Utc::now().timestamp()
         }
     }
 }

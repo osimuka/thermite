@@ -22,7 +22,7 @@ heroku create thermite
 5. Build the Docker image
 
 ```bash
-docker build -t registry.heroku.com/thermite/worker .
+docker build --platform linux/amd64 -t registry.heroku.com/thermite/worker .
 ```
 
 6. Push the Docker image to Heroku Container Registry
