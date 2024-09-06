@@ -21,7 +21,9 @@ pub async fn enqueue_task(client: &redis::Client, task: &BaseTask) -> Result<(),
 }
 
 async fn get_task(mut conn: redis::aio::MultiplexedConnection, now: i64) -> redis::RedisResult<Option<String>> {
-    let tasks: Vec<(String, f64)> = conn.zrangebyscore_withscores("task_queue", "-inf", now as f64).await?;
+    // Get tasks from the queue based on the score (timestamp), taking the highest score up to 'now'
+    let tasks: Vec<(String, f64)> = conn.zrevrangebyscore_withscores("task_queue", now as f64, "-inf").await?;
+    // Retrieve the first task in the list, which will have the highest score within the range
     Ok(tasks.into_iter().next().map(|(task, _score)| task))
 }
 
