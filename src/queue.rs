@@ -1,7 +1,7 @@
 use redis::AsyncCommands;
 use crate::task::BaseTask;
 use crate::errors::TaskQueueError;
-use chrono::{Utc, Local};
+use chrono::Utc;
 
 
 pub async fn enqueue_task(client: &redis::Client, task: &BaseTask) -> Result<(), TaskQueueError> {
@@ -31,6 +31,7 @@ pub async fn dequeue_task(client: &redis::Client) -> Result<Option<BaseTask>, Ta
     let mut conn = client.get_multiplexed_async_connection().await.expect("Failed to connect to Redis");
     // Get the current time as a Unix timestamp
     let now = Utc::now().timestamp() as u64;
+    println!("Current timestamp: {}", now);
     // get first task from the queue based on the score (timestamp)
     let mut task_str = get_task(conn.clone(), now as i64).await?;
     let task: Option<BaseTask> = match task_str {
@@ -48,24 +49,12 @@ pub async fn dequeue_task(client: &redis::Client) -> Result<Option<BaseTask>, Ta
         return Ok(None)
     }
 
-    // check if task is less than or equal to the current time
-    let task_time = task.as_ref().unwrap().cron_string_to_unix_datetime();
-    let local_time = Local::now();
-
-    println!("Task time: {}", task_time.to_string());
-    println!("Now time: {}", local_time.to_string());
-
-    // check if task is ready to be executed
-    if task_time <= local_time {
-        // Remove the task from the queue
-        let task_str_clone = task_str.take().unwrap_or_default();
-        let _: () = conn.zrem("task_queue", &task_str_clone).await?;
-        println!("Dequeued task: {:?}", task);
-        // Return the task
-        return Ok(Some(task.unwrap()))
-    }
-    // Return None if the task is not ready to be executed
-    Ok(None)
+    // Remove the task from the queue
+    let task_str_clone = task_str.take().unwrap_or_default();
+    let _: () = conn.zrem("task_queue", &task_str_clone).await?;
+    println!("Dequeued task: {:?}", task);
+    // Return the task
+    Ok(Some(task.unwrap()))
 }
 
 pub async fn clear_task_queue(client: &redis::Client) -> Result<(), TaskQueueError> {
