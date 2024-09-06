@@ -17,4 +17,3 @@ reqwest = { version = "0.12.5", features = ["json"] }
 cron = "0.12.1"
 chrono = "0.4"
 clap = "4.5.16"
-astrolabe = "0.5.2"

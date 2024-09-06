@@ -1,7 +1,7 @@
 use redis::AsyncCommands;
 use crate::task::BaseTask;
 use crate::errors::TaskQueueError;
-use chrono::Utc;
+use chrono::{Datelike, Utc, Local};
 
 
 pub async fn enqueue_task(client: &redis::Client, task: &BaseTask) -> Result<(), TaskQueueError> {
@@ -11,7 +11,7 @@ pub async fn enqueue_task(client: &redis::Client, task: &BaseTask) -> Result<(),
     println!("Enqueuing task: {}", task_json);
 
     // Add the task to the queue
-    let was_set: bool = conn.zadd("task_queue", task_json, task.cron_string_to_unix_timestamp()).await?;
+    let was_set: bool = conn.zadd("task_queue", task_json, task.scheduled_at).await?;
     if !was_set {
         println!("Task {} already exists, not enqueued again", task.id);
     } else {
@@ -20,32 +20,47 @@ pub async fn enqueue_task(client: &redis::Client, task: &BaseTask) -> Result<(),
     Ok(())
 }
 
+async fn get_task(mut conn: redis::aio::MultiplexedConnection, now: i64) -> redis::RedisResult<Option<String>> {
+    let tasks: Vec<(String, f64)> = conn.zrangebyscore_withscores("task_queue", "-inf", now as f64).await?;
+    Ok(tasks.into_iter().next().map(|(task, _score)| task))
+}
+
 pub async fn dequeue_task(client: &redis::Client) -> Result<Option<BaseTask>, TaskQueueError> {
     let mut conn = client.get_multiplexed_async_connection().await.expect("Failed to connect to Redis");
     // Get the current time as a Unix timestamp
     let now = Utc::now().timestamp() as u64;
     // get first task from the queue based on the score (timestamp)
-    let task_str: Option<String> = conn
-        .zrangebyscore_withscores("task_queue", "-inf", now)
-        .await
-        .unwrap_or_else(|_| vec![]).first().cloned();
+    let mut task_str = get_task(conn.clone(), now as i64).await?;
+    let task: Option<BaseTask> = match task_str {
+        Some(ref task_str) => {
+            println!("Task string: {:?}", task_str);
+            let task: BaseTask = serde_json::from_str(&task_str).expect("Failed to deserialize task");
+            Some(task)
+        }
+        None => None,
+    };
 
-    if task_str.is_none() {
-        return Ok(None);
+    println!("Task: {:?}", task);
+
+    if task.is_none() {
+        return Ok(None)
     }
 
-    let task: BaseTask = serde_json::from_str(&task_str.clone().unwrap())?;
-
     // check if task is less than or equal to the current time
-    let task_timestamp = task.cron_string_to_unix_timestamp();
-    let now_timestamp = Utc::now().timestamp() as i64;
+    let task_time = task.as_ref().unwrap().cron_string_to_unix_datetime();
+    let local_time = Local::now();
 
-    if now_timestamp > task_timestamp {
+    println!("Task time: {}", task_time.to_string());
+    println!("Now time: {}", local_time.to_string());
+
+    // check if task is ready to be executed
+    if task_time <= local_time {
         // Remove the task from the queue
-        let _: () = conn.zrem("task_queue", &task_str).await?;
-        println!("Dequeued task: {}", task_str.as_deref().unwrap_or("None"));
+        let task_str_clone = task_str.take().unwrap_or_default();
+        let _: () = conn.zrem("task_queue", &task_str_clone).await?;
+        println!("Dequeued task: {:?}", task);
         // Return the task
-        return Ok(Some(task))
+        return Ok(Some(task.unwrap()))
     }
     // Return None if the task is not ready to be executed
     Ok(None)
