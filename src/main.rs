@@ -14,7 +14,13 @@ use thermite::queue;
 use thermite::handlers::{AppState, submit_task, submit_tasks, not_found};
 
 
-async fn start_receiver(redis_client: Client, http_client: HttpClient, data: web::Data<Mutex<AppState>>, tx: mpsc::Sender<BaseTask>, mut rx: mpsc::Receiver<BaseTask>) -> std::io::Result<()> {
+async fn start_receiver(
+    redis_client: Client,
+    http_client: HttpClient,
+    data: web::Data<Mutex<AppState>>,
+    tx: mpsc::Sender<BaseTask>,
+    mut rx: mpsc::Receiver<BaseTask>
+) -> std::io::Result<()> {
     // Clear the task queue before starting/restarting the server
     let _ = queue::clear_task_queue(&redis_client).await;
 
@@ -63,7 +69,13 @@ async fn start_receiver(redis_client: Client, http_client: HttpClient, data: web
     }
 }
 
-async fn start_fetcher(redis_client: Client, http_client: HttpClient, data: web::Data<Mutex<AppState>>, tx: mpsc::Sender<BaseTask>, mut rx: mpsc::Receiver<BaseTask>) -> std::io::Result<()> {
+async fn start_fetcher(
+    redis_client: Client,
+    http_client: HttpClient,
+    data: web::Data<Mutex<AppState>>,
+    tx: mpsc::Sender<BaseTask>,
+    mut rx: mpsc::Receiver<BaseTask>
+) -> std::io::Result<()> {
     // Get the URL to fetch tasks from
     let fetch_url = env::var("FETCH_URL").expect("FETCH_URL must be set");
 
