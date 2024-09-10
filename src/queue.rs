@@ -33,7 +33,7 @@ pub async fn dequeue_task(client: &redis::Client) -> Result<Option<BaseTask>, Ta
     let now = Utc::now().timestamp() as u64;
     println!("Current timestamp: {}", now);
     // get first task from the queue based on the score (timestamp)
-    let mut task_str = get_task(conn.clone(), now as i64).await?;
+    let task_str = get_task(conn.clone(), now as i64).await?;
     let task: Option<BaseTask> = match task_str {
         Some(ref task_str) => {
             println!("Task string: {:?}", task_str);
