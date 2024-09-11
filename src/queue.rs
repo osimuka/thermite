@@ -49,19 +49,19 @@ pub async fn dequeue_task(client: &redis::Client) -> Result<Option<BaseTask>, Ta
         return Ok(None)
     }
 
+    // Remove the task from the queue
+    let _: () = conn.zrem("task_queue", &task_str.unwrap()).await?;
+    println!("Dequeued task: {:?}", task);
+
     // Remove the task from the queue only if its not periodic
-    if task.as_ref().unwrap().category != "periodic" {
-        let _: () = conn.zrem("task_queue", &task_str.unwrap()).await?;
-        println!("Dequeued task: {:?}", task);
-        return Ok(Some(task.unwrap()))
+    if task.as_ref().unwrap().category == "periodic" {
+        let mut task = task.clone().unwrap();
+        task.set_next_unix_datetime();
+        let task_json = serde_json::to_string(&task).expect("Failed to serialize task");
+        let _: () = conn.zadd("task_queue", task_json, task.scheduled_at).await?;
+        println!("Updated task: {:?}", task);
     }
-    // else calculate the next scheduled time and update the task
-    let mut task = task.unwrap();
-    task.set_next_unix_datetime();
-    let task_json = serde_json::to_string(&task).expect("Failed to serialize task");
-    let _: () = conn.zadd("task_queue", task_json, task.scheduled_at).await?;
-    println!("Updated task: {:?}", task);
-    Ok(Some(task))
+    Ok(task)
 }
 
 pub async fn clear_task_queue(client: &redis::Client) -> Result<(), TaskQueueError> {
