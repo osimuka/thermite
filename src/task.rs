@@ -111,7 +111,7 @@ impl BaseTask {
     ///   priority: "high".to_string(),
     ///   task: "http://localhost:8080/task".to_string(),
     ///   scheduled_at: 1628764800,
-    ///   cron_scheduled_at: "* 0 0 * * *".to_string(),
+    ///   cron_scheduled_at: "0 0 * * *".to_string(),
     ///   args: None,
     /// };
     ///
