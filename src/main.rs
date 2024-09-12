@@ -21,8 +21,6 @@ async fn start_receiver(
     tx: mpsc::Sender<BaseTask>,
     mut rx: mpsc::Receiver<BaseTask>
 ) -> std::io::Result<()> {
-    // Clear the task queue before starting/restarting the server
-    let _ = queue::clear_task_queue(&redis_client).await;
 
     // Spawning a task to fetch tasks from the Redis queue
     tokio::spawn(async move {
@@ -76,11 +74,9 @@ async fn start_fetcher(
     tx: mpsc::Sender<BaseTask>,
     mut rx: mpsc::Receiver<BaseTask>
 ) -> std::io::Result<()> {
+
     // Get the URL to fetch tasks from
     let fetch_url = env::var("FETCH_URL").expect("FETCH_URL must be set");
-
-    // Clear the task queue before starting/restarting the server
-    let _ = queue::clear_task_queue(&redis_client).await;
 
     // Spawning a task to fetch tasks from the Redis queue
     tokio::spawn(async move {
