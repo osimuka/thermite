@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use chrono::Utc;
 use cron::Schedule;
 
+use crate::errors::TaskQueueError;
+
 /// A structure holding two public integers.
 ///
 /// Example:
@@ -115,39 +117,35 @@ impl BaseTask {
     ///   args: None,
     /// };
     ///
-    /// let next_datetime = task.get_next_unix_datetime();
+    /// let next_datetime = task.get_next_unix_datetime().unwrap();
     /// assert!(next_datetime > 1628764800);
     ///
     /// ```
-    pub fn get_next_unix_datetime(&self) -> i64 {
+    pub fn get_next_unix_datetime(&self) -> Result<i64, TaskQueueError> {
 
         if self.category != "periodic" {
-            return self.scheduled_at as i64;
+            return Ok(self.scheduled_at as i64);
         }
-        let mut cron_schedule = self.cron_scheduled_at.as_str();
-
-        println!("Original Cron schedule: {}", cron_schedule);
-
-        // Check if the cron string has only 5 fields (assumes space-separated fields)
-        let modified_cron_schedule = if cron_schedule.trim().split_whitespace().count() == 5 {
-            // Prepend '0 ' to make it a 6-field cron string
-            format!("0 {}", cron_schedule)
+        let cron_expression = self.cron_scheduled_at.trim();
+        let cron_schedule = if cron_expression.split_whitespace().count() == 5 {
+            format!("0 {}", cron_expression)
         } else {
-            cron_schedule.to_owned()
+            cron_expression.to_owned()
         };
-        cron_schedule = &modified_cron_schedule;
-        println!("Modified Cron schedule for compatibility: {}", cron_schedule);
 
-        // Create a Schedule instance from the cron string
-        let schedule = Schedule::from_str(cron_schedule).expect("Failed to parse CRON expression");
+        println!("Cron schedule for compatibility: {}", cron_schedule);
 
-        // Get the next occurrence from the schedule
-        let next_occurrence = schedule.upcoming(Utc).next().expect("No upcoming dates found");
+        let schedule = Schedule::from_str(&cron_schedule)
+            .map_err(|e| TaskQueueError::InvalidCronExpression(e.to_string()))?;
+
+        let next_occurrence = schedule
+            .upcoming(Utc)
+            .next()
+            .ok_or_else(|| TaskQueueError::InvalidCronExpression("No upcoming dates found".to_string()))?;
 
         println!("Next occurrence: {}", next_occurrence);
 
-        // Return the next occurrence as DateTime<Utc>
-        next_occurrence.timestamp()
+        Ok(next_occurrence.timestamp())
     }
 
 
@@ -173,10 +171,11 @@ impl BaseTask {
     ///     args: None,
     /// };
     ///
-    /// task.set_next_unix_datetime();
+    /// task.set_next_unix_datetime().unwrap();
     /// assert!(task.scheduled_at > 1628764800);
     /// ```
-    pub fn set_next_unix_datetime(&mut self) {
-        self.scheduled_at = self.get_next_unix_datetime() as u64;
+    pub fn set_next_unix_datetime(&mut self) -> Result<(), TaskQueueError> {
+        self.scheduled_at = self.get_next_unix_datetime()? as u64;
+        Ok(())
     }
 }

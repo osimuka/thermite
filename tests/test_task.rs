@@ -12,13 +12,13 @@ mod tests {
             ..Default::default()
         };
 
-        let next_datetime = task.get_next_unix_datetime();
+        let next_datetime = task.get_next_unix_datetime().unwrap();
         assert_eq!(next_datetime, 1628764800); // Scheduled datetime should remain the same
     }
 
     #[test]
     fn test_get_next_unix_datetime_periodic() {
-        let current = 1628764800 as i64; // Unix timestamp for August 13, 2021 00:00:00 UTC
+        let current = 1628764800_i64; // Unix timestamp for August 13, 2021 00:00:00 UTC
         let task = BaseTask {
             category: "periodic".to_string(),
             scheduled_at: current as u64, // Unix timestamp for August 13, 2021 00:00:00 UTC
@@ -26,7 +26,7 @@ mod tests {
             ..Default::default()
         };
 
-        let next_datetime = task.get_next_unix_datetime();
+        let next_datetime = task.get_next_unix_datetime().unwrap();
         // today at midnight
 
         assert!(next_datetime > Utc::now().timestamp()); // Unix timestamp for August 14, 2021 00:00:00 UTC
@@ -41,7 +41,7 @@ mod tests {
             ..Default::default()
         };
 
-        task.set_next_unix_datetime();
+        task.set_next_unix_datetime().unwrap();
         assert_eq!(task.scheduled_at, 1628764800); // Scheduled datetime should remain the same
     }
 
@@ -54,7 +54,7 @@ mod tests {
             ..Default::default()
         };
 
-        task.set_next_unix_datetime();
+        task.set_next_unix_datetime().unwrap();
         assert!(task.scheduled_at as i64 > Utc::now().timestamp());
     }
 }
