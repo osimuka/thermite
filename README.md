@@ -108,6 +108,8 @@ Thermite uses these environment variables and CLI options:
 | `TASKS_URL` | Address the HTTP server binds to in `receiver` mode | `127.0.0.1:8080` |
 | `FETCH_URL` | Endpoint to poll for tasks in `fetcher` mode | required for fetcher |
 | `THERMITE_API_KEY` | Optional API key required on `POST /submit-task` and `POST /submit-tasks` via `x-api-key` or `Authorization: Bearer ...` | unset |
+| `THERMITE_ALLOWED_HOSTS` | Optional comma-separated allowlist of task target hosts/domains such as `jobs.example.com,hooks.example.org` | unset |
+| `THERMITE_REQUIRE_HTTPS` | If set to `true`, `1`, `yes`, or `on`, only `https://` task targets are accepted | unset |
 | `--mode` | Run mode: `receiver` or `fetcher` | `receiver` |
 
 ## Typical workflow

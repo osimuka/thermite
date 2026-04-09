@@ -1,8 +1,10 @@
+use std::net::IpAddr;
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 use chrono::Utc;
 use cron::Schedule;
+use url::Url;
 
 use crate::errors::TaskQueueError;
 
@@ -90,6 +92,102 @@ impl Default for BaseTask {
 
 
 impl BaseTask {
+    fn env_flag(name: &str) -> bool {
+        std::env::var(name)
+            .map(|value| matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+            .unwrap_or(false)
+    }
+
+    fn is_disallowed_ip_address(ip: IpAddr) -> bool {
+        match ip {
+            IpAddr::V4(address) => {
+                address.is_private()
+                    || address.is_loopback()
+                    || address.is_link_local()
+                    || address.is_broadcast()
+                    || address.is_documentation()
+                    || address.is_unspecified()
+                    || address.is_multicast()
+            }
+            IpAddr::V6(address) => {
+                let first_segment = address.segments()[0];
+
+                address.is_loopback()
+                    || address.is_unspecified()
+                    || (first_segment & 0xfe00) == 0xfc00
+                    || (first_segment & 0xffc0) == 0xfe80
+                    || address.is_multicast()
+            }
+        }
+    }
+
+    fn is_host_allowed(host: &str, allowed_hosts: &str) -> bool {
+        allowed_hosts
+            .split(',')
+            .map(|entry| entry.trim().to_ascii_lowercase())
+            .filter(|entry| !entry.is_empty())
+            .any(|entry| host == entry || host.ends_with(&format!(".{entry}")))
+    }
+
+    pub fn validate_target_url(&self) -> Result<(), TaskQueueError> {
+        let parsed_url = Url::parse(&self.task).map_err(|e| {
+            TaskQueueError::InvalidTaskTarget(format!("Invalid task URL '{}': {e}", self.task))
+        })?;
+
+        match parsed_url.scheme() {
+            "https" => {}
+            "http" if !Self::env_flag("THERMITE_REQUIRE_HTTPS") => {}
+            "http" => {
+                return Err(TaskQueueError::InvalidTaskTarget(
+                    "Only HTTPS task URLs are allowed when THERMITE_REQUIRE_HTTPS is enabled".to_string(),
+                ));
+            }
+            scheme => {
+                return Err(TaskQueueError::InvalidTaskTarget(format!(
+                    "Unsupported task URL scheme: {scheme}"
+                )));
+            }
+        }
+
+        let host = parsed_url
+            .host_str()
+            .ok_or_else(|| TaskQueueError::InvalidTaskTarget("Task URL must include a host".to_string()))?
+            .to_ascii_lowercase();
+
+        if host == "localhost" || host.ends_with(".localhost") {
+            return Err(TaskQueueError::InvalidTaskTarget(format!(
+                "Task host '{host}' is not allowed"
+            )));
+        }
+
+        if let Ok(ip_address) = host.parse::<IpAddr>() {
+            if Self::is_disallowed_ip_address(ip_address) {
+                return Err(TaskQueueError::InvalidTaskTarget(format!(
+                    "Task host '{host}' resolves to a blocked IP range"
+                )));
+            }
+        }
+
+        if let Ok(allowed_hosts) = std::env::var("THERMITE_ALLOWED_HOSTS") {
+            if !allowed_hosts.trim().is_empty() && !Self::is_host_allowed(&host, &allowed_hosts) {
+                return Err(TaskQueueError::InvalidTaskTarget(format!(
+                    "Task host '{host}' is not in THERMITE_ALLOWED_HOSTS"
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn validate(&self) -> Result<(), TaskQueueError> {
+        self.validate_target_url()?;
+
+        if self.category == "periodic" {
+            let _ = self.get_next_unix_datetime()?;
+        }
+
+        Ok(())
+    }
 
     /// Returns the next occurrence of a Unix datetime based on the task's cron schedule.
     /// If the task's category is not "periodic", the method returns the scheduled datetime as an i64.
