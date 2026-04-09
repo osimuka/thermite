@@ -107,6 +107,7 @@ Thermite uses these environment variables and CLI options:
 | `REDIS_URL` | Redis connection string | `redis://localhost:6379` |
 | `TASKS_URL` | Address the HTTP server binds to in `receiver` mode | `127.0.0.1:8080` |
 | `FETCH_URL` | Endpoint to poll for tasks in `fetcher` mode | required for fetcher |
+| `THERMITE_API_KEY` | Optional API key required on `POST /submit-task` and `POST /submit-tasks` via `x-api-key` or `Authorization: Bearer ...` | unset |
 | `--mode` | Run mode: `receiver` or `fetcher` | `receiver` |
 
 ## Typical workflow

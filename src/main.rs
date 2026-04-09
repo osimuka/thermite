@@ -11,7 +11,7 @@ use reqwest::Client as HttpClient;
 use thermite::task::BaseTask;
 use thermite::worker;
 use thermite::queue;
-use thermite::handlers::{AppState, submit_task, submit_tasks, not_found};
+use thermite::handlers::{health_check, AppState, submit_task, submit_tasks, not_found};
 
 
 async fn start_receiver(
@@ -25,12 +25,21 @@ async fn start_receiver(
     // Spawning a task to fetch tasks from the Redis queue
     tokio::spawn(async move {
         loop {
-            if let Ok(Some(task)) = queue::dequeue_task(&redis_client).await {
-                tx.send(task).await.unwrap_or_default();
-            } else {
-                // Sleep for a second if there are no tasks in the queue
-                println!("No tasks in the queue");
-                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+            match queue::dequeue_task(&redis_client).await {
+                Ok(Some(task)) => {
+                    if tx.send(task).await.is_err() {
+                        eprintln!("Worker channel closed while dispatching task");
+                        break;
+                    }
+                }
+                Ok(None) => {
+                    println!("No tasks in the queue");
+                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                }
+                Err(e) => {
+                    eprintln!("Failed to dequeue task: {}", e);
+                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                }
             }
         }
     });
@@ -54,6 +63,7 @@ async fn start_receiver(
     match HttpServer::new(move || {
         App::new()
             .app_data(data.clone())
+            .route("/healthz", web::get().to(health_check))
             .route("/submit-task",web::post().to(submit_task))
             .route("/submit-tasks",web::post().to(submit_tasks))
             .default_service(web::route().to(not_found))
@@ -76,17 +86,31 @@ async fn start_fetcher(
 ) -> std::io::Result<()> {
 
     // Get the URL to fetch tasks from
-    let fetch_url = env::var("FETCH_URL").expect("FETCH_URL must be set");
+    let fetch_url = env::var("FETCH_URL").map_err(|e| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("FETCH_URL must be set: {e}"),
+        )
+    })?;
 
     // Spawning a task to fetch tasks from the Redis queue
     tokio::spawn(async move {
         loop {
-            if let Ok(Some(task)) = queue::dequeue_task(&redis_client).await {
-                tx.send(task).await.unwrap_or_default();
-            } else {
-                // Sleep for a second if there are no tasks in the queue
-                println!("No tasks in the queue");
-                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+            match queue::dequeue_task(&redis_client).await {
+                Ok(Some(task)) => {
+                    if tx.send(task).await.is_err() {
+                        eprintln!("Worker channel closed while dispatching task");
+                        break;
+                    }
+                }
+                Ok(None) => {
+                    println!("No tasks in the queue");
+                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                }
+                Err(e) => {
+                    eprintln!("Failed to dequeue task: {}", e);
+                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                }
             }
         }
     });
@@ -115,7 +139,13 @@ async fn start_fetcher(
             Ok(res) => {
                 if let Ok(tasks) = res.json::<Vec<BaseTask>>().await {
                     for task in tasks {
-                        let redis_client = data.lock().unwrap().redis_client.clone();
+                        let redis_client = match data.lock() {
+                            Ok(state) => state.redis_client.clone(),
+                            Err(e) => {
+                                eprintln!("Application state unavailable while enqueueing fetched tasks: {}", e);
+                                continue;
+                            }
+                        };
                         match queue::enqueue_task(&redis_client, &task).await {
                             Ok(_) => println!("Task enqueued: {}", task.id),
                             Err(e) => eprintln!("Failed to enqueue task: {}", e),
@@ -173,9 +203,17 @@ async fn main() -> std::io::Result<()> {
     let redis_url = matches.get_one::<String>("redis-url").unwrap_or(&default_redis_url);
 
     // Create the Redis client
-    let redis_client = Client::open(redis_url.as_str()).expect("Invalid Redis URL");
+    let redis_client = Client::open(redis_url.as_str()).map_err(|e| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("Invalid Redis URL: {e}"),
+        )
+    })?;
     // Create a new HTTP client allow for http requests
-    let http_client = HttpClient::new();
+    let http_client = HttpClient::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| std::io::Error::other(format!("Failed to build HTTP client: {e}")))?;
     let data = web::Data::new(Mutex::new(AppState {
         redis_client: redis_client.clone(),
     }));
