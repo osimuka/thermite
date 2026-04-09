@@ -5,6 +5,8 @@ use chrono::Utc;
 
 
 pub async fn enqueue_task(client: &redis::Client, task: &BaseTask) -> Result<(), TaskQueueError> {
+    task.validate()?;
+
     let mut conn = client.get_multiplexed_async_connection().await?;
     let task_json = serde_json::to_string(task)?;
 
