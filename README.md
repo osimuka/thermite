@@ -17,6 +17,7 @@ Once a task is in Redis, Thermite:
 2. polls for due tasks,
 3. executes each due task by `POST`ing to its `task` URL,
 4. re-enqueues periodic tasks with their next cron-based run time.
+5. retries failed deliveries with exponential backoff and eventually moves exhausted tasks to a Redis dead-letter queue.
 
 ## Task model
 
@@ -33,6 +34,9 @@ Each task contains:
 | `scheduled_at` | Unix timestamp for the next run |
 | `cron_scheduled_at` | Cron expression used for periodic jobs |
 | `args` | Optional JSON payload passed through to the target URL |
+| `max_retries` | Optional retry limit before the task is moved to the dead-letter queue |
+| `retry_count` | Current retry attempt count tracked by Thermite |
+| `last_error` | Last delivery error recorded for retry/dead-letter inspection |
 
 When a task is executed, Thermite sends a request like:
 
@@ -52,6 +56,9 @@ Submit a single task.
 
 ### `POST /submit-tasks`
 Submit multiple tasks in one request.
+
+### `GET /dead-letter-tasks`
+Inspect tasks that exhausted retries and were moved to the dead-letter queue. If `THERMITE_API_KEY` is set, include `x-api-key` or `Authorization: Bearer ...`.
 
 ### Example task payload
 
@@ -110,6 +117,8 @@ Thermite uses these environment variables and CLI options:
 | `THERMITE_API_KEY` | Optional API key required on `POST /submit-task` and `POST /submit-tasks` via `x-api-key` or `Authorization: Bearer ...` | unset |
 | `THERMITE_ALLOWED_HOSTS` | Optional comma-separated allowlist of task target hosts/domains such as `jobs.example.com,hooks.example.org` | unset |
 | `THERMITE_REQUIRE_HTTPS` | If set to `true`, `1`, `yes`, or `on`, only `https://` task targets are accepted | unset |
+| `THERMITE_MAX_RETRIES` | Default retry count before a failed task is moved to the Redis dead-letter queue | `3` |
+| `THERMITE_RETRY_BASE_DELAY_SECS` | Base retry delay in seconds; Thermite applies exponential backoff from this value | `30` |
 | `RUST_LOG` | Log level / filter for structured logs, e.g. `info` or `thermite=debug,actix_web=info` | `info` |
 | `--mode` | Run mode: `receiver` or `fetcher` | `receiver` |
 
@@ -119,6 +128,7 @@ Thermite uses these environment variables and CLI options:
 2. Thermite stores them in Redis.
 3. When `scheduled_at` is due, Thermite executes the target URL.
 4. If the task is `periodic`, it computes the next run from `cron_scheduled_at` and requeues it.
+5. If execution keeps failing after the configured retries, the task is stored in `dead_letter_queue` and can be reviewed via `GET /dead-letter-tasks`.
 
 ## Heroku container deployment
 

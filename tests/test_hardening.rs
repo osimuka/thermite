@@ -2,7 +2,7 @@
 mod tests {
     use actix_web::{http::StatusCode, test as actix_test, web, App};
     use std::sync::Mutex;
-    use thermite::handlers::{health_check, submit_task, AppState};
+    use thermite::handlers::{dead_letter_tasks, health_check, submit_task, AppState};
     use thermite::task::BaseTask;
 
     #[actix_web::test]
@@ -19,6 +19,7 @@ mod tests {
     }
 
     #[actix_web::test]
+    #[serial_test::serial]
     async fn submit_task_requires_api_key_when_configured() {
         std::env::set_var("THERMITE_API_KEY", "test-secret");
 
@@ -53,7 +54,32 @@ mod tests {
     }
 
     #[actix_web::test]
+    #[serial_test::serial]
+    async fn dead_letter_endpoint_requires_api_key_when_configured() {
+        std::env::set_var("THERMITE_API_KEY", "test-secret");
+
+        let redis_client = redis::Client::open("redis://127.0.0.1/").unwrap();
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(web::Data::new(Mutex::new(AppState { redis_client })))
+                .route("/dead-letter-tasks", web::get().to(dead_letter_tasks)),
+        )
+        .await;
+
+        let req = actix_test::TestRequest::get()
+            .uri("/dead-letter-tasks")
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+
+        std::env::remove_var("THERMITE_API_KEY");
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[actix_web::test]
+    #[serial_test::serial]
     async fn submit_task_rejects_localhost_target() {
+        std::env::set_var("THERMITE_API_KEY", "test-secret");
+
         let redis_client = redis::Client::open("redis://127.0.0.1/").unwrap();
         let app = actix_test::init_service(
             App::new()
@@ -81,10 +107,12 @@ mod tests {
             .to_request();
         let resp = actix_test::call_service(&app, req).await;
 
+        std::env::remove_var("THERMITE_API_KEY");
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     #[test]
+    #[serial_test::serial]
     fn allowlist_enforces_configured_hosts() {
         std::env::set_var("THERMITE_ALLOWED_HOSTS", "jobs.example.com");
 
