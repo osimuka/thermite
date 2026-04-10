@@ -9,6 +9,20 @@ use url::Url;
 
 use crate::errors::TaskQueueError;
 
+fn default_max_retries() -> u32 {
+    std::env::var("THERMITE_MAX_RETRIES")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .unwrap_or(3)
+}
+
+fn default_retry_base_delay_secs() -> u64 {
+    std::env::var("THERMITE_RETRY_BASE_DELAY_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(30)
+}
+
 /// A structure holding two public integers.
 ///
 /// Example:
@@ -26,6 +40,10 @@ use crate::errors::TaskQueueError;
 ///    scheduled_at: 1628764800,
 ///    cron_scheduled_at: "* 0 0 * * *".to_string(),
 ///    args: None,
+///    max_retries: 3,
+///    retry_count: 0,
+///    last_error: None,
+///    is_retry: false,
 /// };
 ///
 /// assert_eq!(task.id, "1");
@@ -41,6 +59,14 @@ pub struct BaseTask {
     pub scheduled_at: u64,
     pub cron_scheduled_at: String,
     pub args: Option<std::collections::HashMap<String, serde_json::Value>>,
+    #[serde(default = "default_max_retries")]
+    pub max_retries: u32,
+    #[serde(default)]
+    pub retry_count: u32,
+    #[serde(default)]
+    pub last_error: Option<String>,
+    #[serde(default)]
+    pub is_retry: bool,
 }
 
 
@@ -56,7 +82,14 @@ pub struct BaseTaskPayload {
     pub scheduled_at: u64,
     pub cron_scheduled_at: String,
     pub args: Option<std::collections::HashMap<String, serde_json::Value>>,
-
+    #[serde(default = "default_max_retries")]
+    pub max_retries: u32,
+    #[serde(default)]
+    pub retry_count: u32,
+    #[serde(default)]
+    pub last_error: Option<String>,
+    #[serde(default)]
+    pub is_retry: bool,
 }
 
 impl From<BaseTaskPayload> for BaseTask {
@@ -71,6 +104,10 @@ impl From<BaseTaskPayload> for BaseTask {
             scheduled_at: payload.scheduled_at,
             cron_scheduled_at: payload.cron_scheduled_at,
             args: payload.args,
+            max_retries: payload.max_retries,
+            retry_count: payload.retry_count,
+            last_error: payload.last_error,
+            is_retry: payload.is_retry,
         }
     }
 }
@@ -87,6 +124,10 @@ impl Default for BaseTask {
             scheduled_at: 0,
             cron_scheduled_at: "".to_string(),
             args: None,
+            max_retries: default_max_retries(),
+            retry_count: 0,
+            last_error: None,
+            is_retry: false,
         }
     }
 }
@@ -190,6 +231,25 @@ impl BaseTask {
         Ok(())
     }
 
+    pub fn schedule_retry(&mut self, error_message: &str) -> bool {
+        self.last_error = Some(error_message.to_string());
+
+        if self.retry_count >= self.max_retries {
+            return false;
+        }
+
+        self.retry_count = self.retry_count.saturating_add(1);
+        self.is_retry = true;
+
+        let retry_multiplier = 1_u64
+            .checked_shl(self.retry_count.saturating_sub(1))
+            .unwrap_or(u64::MAX);
+        let retry_delay = default_retry_base_delay_secs().saturating_mul(retry_multiplier);
+        self.scheduled_at = (Utc::now().timestamp().max(0) as u64).saturating_add(retry_delay);
+
+        true
+    }
+
     /// Returns the next occurrence of a Unix datetime based on the task's cron schedule.
     /// If the task's category is not "periodic", the method returns the scheduled datetime as an i64.
     /// If the task's category is "periodic", the method parses the cron schedule and calculates the next occurrence.
@@ -214,6 +274,10 @@ impl BaseTask {
     ///   scheduled_at: 1628764800,
     ///   cron_scheduled_at: "0 0 * * *".to_string(),
     ///   args: None,
+    ///   max_retries: 3,
+    ///   retry_count: 0,
+    ///   last_error: None,
+    ///   is_retry: false,
     /// };
     ///
     /// let next_datetime = task.get_next_unix_datetime().unwrap();
@@ -268,6 +332,10 @@ impl BaseTask {
     ///     scheduled_at: 1628764800,
     ///     cron_scheduled_at: "* 0 0 * * *".to_string(),
     ///     args: None,
+    ///     max_retries: 3,
+    ///     retry_count: 0,
+    ///     last_error: None,
+    ///     is_retry: false,
     /// };
     ///
     /// task.set_next_unix_datetime().unwrap();

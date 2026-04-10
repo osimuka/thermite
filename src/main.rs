@@ -14,7 +14,7 @@ use tracing_subscriber::EnvFilter;
 use thermite::task::BaseTask;
 use thermite::worker;
 use thermite::queue;
-use thermite::handlers::{health_check, not_found, submit_task, submit_tasks, AppState};
+use thermite::handlers::{dead_letter_tasks, health_check, not_found, submit_task, submit_tasks, AppState};
 
 fn init_tracing() {
     let env_filter = EnvFilter::try_from_default_env()
@@ -27,15 +27,7 @@ fn init_tracing() {
         .try_init();
 }
 
-async fn start_receiver(
-    redis_client: Client,
-    http_client: HttpClient,
-    data: web::Data<Mutex<AppState>>,
-    tx: mpsc::Sender<BaseTask>,
-    mut rx: mpsc::Receiver<BaseTask>
-) -> std::io::Result<()> {
-
-    // Spawning a task to fetch tasks from the Redis queue
+fn spawn_queue_dispatcher(redis_client: Client, tx: mpsc::Sender<BaseTask>) {
     tokio::spawn(async move {
         loop {
             match queue::dequeue_task(&redis_client).await {
@@ -56,16 +48,40 @@ async fn start_receiver(
             }
         }
     });
+}
 
-    // Spawning a task to process received tasks using the HTTPS client
-    let cloned_http_client = Arc::new(http_client.clone());
+fn spawn_task_processor(
+    redis_client: Client,
+    http_client: HttpClient,
+    mut rx: mpsc::Receiver<BaseTask>,
+) {
+    let http_client = Arc::new(http_client);
+
     tokio::spawn(async move {
         while let Some(task) = rx.recv().await {
-            let client = Arc::clone(&cloned_http_client);
+            let client = Arc::clone(&http_client);
+            let failure_client = redis_client.clone();
             let handle = tokio::spawn(async move {
-                let _ = worker::execute_task(client, task).await?;
-                Ok::<(), reqwest::Error>(())
+                let failed_task = task.clone();
+
+                match worker::execute_task(client, task).await {
+                    Ok(_) => Ok::<(), reqwest::Error>(()),
+                    Err(error) => {
+                        if let Err(queue_error) =
+                            queue::handle_task_failure(&failure_client, &failed_task, &error.to_string()).await
+                        {
+                            error!(
+                                task_id = %failed_task.id,
+                                error = %queue_error,
+                                "failed to persist retry or dead-letter state"
+                            );
+                        }
+
+                        Err(error)
+                    }
+                }
             });
+
             match handle.await {
                 Ok(Ok(())) => info!("task executed successfully"),
                 Ok(Err(e)) => error!(error = %e, "task execution failed"),
@@ -73,6 +89,18 @@ async fn start_receiver(
             }
         }
     });
+}
+
+async fn start_receiver(
+    redis_client: Client,
+    http_client: HttpClient,
+    data: web::Data<Mutex<AppState>>,
+    tx: mpsc::Sender<BaseTask>,
+    rx: mpsc::Receiver<BaseTask>
+) -> std::io::Result<()> {
+
+    spawn_queue_dispatcher(redis_client.clone(), tx);
+    spawn_task_processor(redis_client, http_client, rx);
 
     let bind_address = env::var("TASKS_URL").unwrap_or_else(|_| "127.0.0.1:8080".to_string());
     info!(bind_address = %bind_address, "starting receiver HTTP server");
@@ -81,6 +109,7 @@ async fn start_receiver(
         App::new()
             .app_data(data.clone())
             .route("/healthz", web::get().to(health_check))
+            .route("/dead-letter-tasks", web::get().to(dead_letter_tasks))
             .route("/submit-task",web::post().to(submit_task))
             .route("/submit-tasks",web::post().to(submit_tasks))
             .default_service(web::route().to(not_found))
@@ -99,7 +128,7 @@ async fn start_fetcher(
     http_client: HttpClient,
     data: web::Data<Mutex<AppState>>,
     tx: mpsc::Sender<BaseTask>,
-    mut rx: mpsc::Receiver<BaseTask>
+    rx: mpsc::Receiver<BaseTask>
 ) -> std::io::Result<()> {
 
     // Get the URL to fetch tasks from
@@ -111,44 +140,8 @@ async fn start_fetcher(
     })?;
     info!("starting fetcher loop");
 
-    // Spawning a task to fetch tasks from the Redis queue
-    tokio::spawn(async move {
-        loop {
-            match queue::dequeue_task(&redis_client).await {
-                Ok(Some(task)) => {
-                    if tx.send(task).await.is_err() {
-                        warn!("worker channel closed while dispatching task");
-                        break;
-                    }
-                }
-                Ok(None) => {
-                    debug!("no tasks in the queue");
-                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-                }
-                Err(e) => {
-                    error!(error = %e, "failed to dequeue task");
-                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-                }
-            }
-        }
-    });
-
-    // Spawning a task to process received tasks using the HTTPS client
-    let cloned_http_client = Arc::new(http_client.clone());
-    tokio::spawn(async move {
-        while let Some(task) = rx.recv().await {
-            let client = Arc::clone(&cloned_http_client);
-            let handle = tokio::spawn(async move {
-                let _ = worker::execute_task(client, task).await?;
-                Ok::<(), reqwest::Error>(())
-            });
-            match handle.await {
-                Ok(Ok(())) => info!("task executed successfully"),
-                Ok(Err(e)) => error!(error = %e, "task execution failed"),
-                Err(e) => error!(error = %e, "task worker join failed"),
-            }
-        }
-    });
+    spawn_queue_dispatcher(redis_client.clone(), tx);
+    spawn_task_processor(redis_client, http_client.clone(), rx);
 
     // Fetch tasks from the URL and enqueue them
     // Spawning a task to fetch tasks from the given URL every second

@@ -133,6 +133,28 @@ pub async fn submit_tasks(
     }
 }
 
+pub async fn dead_letter_tasks(
+    req: HttpRequest,
+    data: web::Data<Mutex<AppState>>,
+) -> impl Responder {
+    if let Err(response) = authorize_request(&req) {
+        return response;
+    }
+
+    let redis_client = match data.lock() {
+        Ok(state) => state.redis_client.clone(),
+        Err(e) => {
+            return HttpResponse::InternalServerError()
+                .json(json!({"error": format!("Application state unavailable: {e}")}));
+        }
+    };
+
+    match queue::get_dead_letter_tasks(&redis_client).await {
+        Ok(tasks) => HttpResponse::Ok().json(json!({"tasks": tasks, "count": tasks.len()})),
+        Err(error) => task_error_response(error),
+    }
+}
+
 pub async fn health_check() -> impl Responder {
     HttpResponse::Ok().json(json!({"status": "ok"}))
 }
