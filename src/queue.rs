@@ -1,7 +1,9 @@
-use redis::AsyncCommands;
-use crate::task::BaseTask;
-use crate::errors::TaskQueueError;
 use chrono::Utc;
+use redis::AsyncCommands;
+use tracing::{debug, info};
+
+use crate::errors::TaskQueueError;
+use crate::task::BaseTask;
 
 
 pub async fn enqueue_task(client: &redis::Client, task: &BaseTask) -> Result<(), TaskQueueError> {
@@ -10,13 +12,13 @@ pub async fn enqueue_task(client: &redis::Client, task: &BaseTask) -> Result<(),
     let mut conn = client.get_multiplexed_async_connection().await?;
     let task_json = serde_json::to_string(task)?;
 
-    println!("Enqueuing task: {}", task_json);
+    info!(task_id = %task.id, scheduled_at = task.scheduled_at, category = %task.category, "enqueuing task");
 
     let was_set: bool = conn.zadd("task_queue", task_json, task.scheduled_at).await?;
     if !was_set {
-        println!("Task {} already exists, not enqueued again", task.id);
+        info!(task_id = %task.id, "task already existed in queue");
     } else {
-        println!("Enqueued task: {}", task.id);
+        info!(task_id = %task.id, "task enqueued");
     }
     Ok(())
 }
@@ -31,26 +33,24 @@ async fn get_task(mut conn: redis::aio::MultiplexedConnection, now: i64) -> redi
 pub async fn dequeue_task(client: &redis::Client) -> Result<Option<BaseTask>, TaskQueueError> {
     let mut conn = client.get_multiplexed_async_connection().await?;
     let now = Utc::now().timestamp() as u64;
-    println!("Current timestamp: {}", now);
+    debug!(now, "checking queue for due tasks");
 
     let task_str = match get_task(conn.clone(), now as i64).await? {
         Some(task_str) => task_str,
         None => return Ok(None),
     };
 
-    println!("Task string: {:?}", task_str);
     let task: BaseTask = serde_json::from_str(&task_str)?;
-    println!("Task: {:?}", task);
 
     let _: () = conn.zrem("task_queue", &task_str).await?;
-    println!("Dequeued task: {:?}", task);
+    info!(task_id = %task.id, category = %task.category, "dequeued task");
 
     if task.category == "periodic" {
         let mut rescheduled_task = task.clone();
         rescheduled_task.set_next_unix_datetime()?;
         let task_json = serde_json::to_string(&rescheduled_task)?;
         let _: () = conn.zadd("task_queue", task_json, rescheduled_task.scheduled_at).await?;
-        println!("Updated task: {:?}", rescheduled_task);
+        info!(task_id = %rescheduled_task.id, next_scheduled_at = rescheduled_task.scheduled_at, "rescheduled periodic task");
     }
 
     Ok(Some(task))

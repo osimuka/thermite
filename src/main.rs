@@ -1,18 +1,31 @@
 use std::env;
-use clap::{Arg, Command, ArgAction};
-use redis::Client;
-use tokio::sync::mpsc;
 use std::sync::Arc;
-use actix_web::{web, App, HttpServer};
 use std::sync::Mutex;
+
+use actix_web::{web, App, HttpServer};
+use clap::{Arg, ArgAction, Command};
+use redis::Client;
 use reqwest::Client as HttpClient;
+use tokio::sync::mpsc;
+use tracing::{debug, error, info, warn};
+use tracing_subscriber::EnvFilter;
 
 // local package imports
 use thermite::task::BaseTask;
 use thermite::worker;
 use thermite::queue;
-use thermite::handlers::{health_check, AppState, submit_task, submit_tasks, not_found};
+use thermite::handlers::{health_check, not_found, submit_task, submit_tasks, AppState};
 
+fn init_tracing() {
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info,thermite=info"));
+
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(env_filter)
+        .with_target(false)
+        .compact()
+        .try_init();
+}
 
 async fn start_receiver(
     redis_client: Client,
@@ -28,16 +41,16 @@ async fn start_receiver(
             match queue::dequeue_task(&redis_client).await {
                 Ok(Some(task)) => {
                     if tx.send(task).await.is_err() {
-                        eprintln!("Worker channel closed while dispatching task");
+                        warn!("worker channel closed while dispatching task");
                         break;
                     }
                 }
                 Ok(None) => {
-                    println!("No tasks in the queue");
+                    debug!("no tasks in the queue");
                     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                 }
                 Err(e) => {
-                    eprintln!("Failed to dequeue task: {}", e);
+                    error!(error = %e, "failed to dequeue task");
                     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                 }
             }
@@ -54,11 +67,15 @@ async fn start_receiver(
                 Ok::<(), reqwest::Error>(())
             });
             match handle.await {
-                Ok(res) => println!("Task executed successfully {:?}", res),
-                Err(e) => eprintln!("Failed to execute task: {}", e),
+                Ok(Ok(())) => info!("task executed successfully"),
+                Ok(Err(e)) => error!(error = %e, "task execution failed"),
+                Err(e) => error!(error = %e, "task worker join failed"),
             }
         }
     });
+
+    let bind_address = env::var("TASKS_URL").unwrap_or_else(|_| "127.0.0.1:8080".to_string());
+    info!(bind_address = %bind_address, "starting receiver HTTP server");
 
     match HttpServer::new(move || {
         App::new()
@@ -68,10 +85,10 @@ async fn start_receiver(
             .route("/submit-tasks",web::post().to(submit_tasks))
             .default_service(web::route().to(not_found))
     })
-    .bind(env::var("TASKS_URL").unwrap_or_else(|_| "127.0.0.1:8080".to_string())) {
+    .bind(&bind_address) {
         Ok(server) => server.run().await,
         Err(e) => {
-            eprintln!("Failed to bind server: {}", e);
+            error!(error = %e, bind_address = %bind_address, "failed to bind server");
             Err(e)
         }
     }
@@ -92,6 +109,7 @@ async fn start_fetcher(
             format!("FETCH_URL must be set: {e}"),
         )
     })?;
+    info!("starting fetcher loop");
 
     // Spawning a task to fetch tasks from the Redis queue
     tokio::spawn(async move {
@@ -99,16 +117,16 @@ async fn start_fetcher(
             match queue::dequeue_task(&redis_client).await {
                 Ok(Some(task)) => {
                     if tx.send(task).await.is_err() {
-                        eprintln!("Worker channel closed while dispatching task");
+                        warn!("worker channel closed while dispatching task");
                         break;
                     }
                 }
                 Ok(None) => {
-                    println!("No tasks in the queue");
+                    debug!("no tasks in the queue");
                     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                 }
                 Err(e) => {
-                    eprintln!("Failed to dequeue task: {}", e);
+                    error!(error = %e, "failed to dequeue task");
                     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                 }
             }
@@ -125,8 +143,9 @@ async fn start_fetcher(
                 Ok::<(), reqwest::Error>(())
             });
             match handle.await {
-                Ok(res) => println!("Task executed successfully {:?}", res),
-                Err(e) => eprintln!("Failed to execute task: {}", e),
+                Ok(Ok(())) => info!("task executed successfully"),
+                Ok(Err(e)) => error!(error = %e, "task execution failed"),
+                Err(e) => error!(error = %e, "task worker join failed"),
             }
         }
     });
@@ -142,18 +161,18 @@ async fn start_fetcher(
                         let redis_client = match data.lock() {
                             Ok(state) => state.redis_client.clone(),
                             Err(e) => {
-                                eprintln!("Application state unavailable while enqueueing fetched tasks: {}", e);
+                                error!(error = %e, "application state unavailable while enqueueing fetched tasks");
                                 continue;
                             }
                         };
                         match queue::enqueue_task(&redis_client, &task).await {
-                            Ok(_) => println!("Task enqueued: {}", task.id),
-                            Err(e) => eprintln!("Failed to enqueue task: {}", e),
+                            Ok(_) => info!(task_id = %task.id, "task enqueued from fetcher"),
+                            Err(e) => warn!(task_id = %task.id, error = %e, "failed to enqueue fetched task"),
                         }
                     }
                 }
             }
-            Err(e) => println!("Failed to fetch tasks: {}", e),
+            Err(e) => warn!(error = %e, "failed to fetch tasks"),
         }
         tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
     }
@@ -194,10 +213,12 @@ fn cli() -> Command {
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
+    init_tracing();
 
     let matches = cli().get_matches();
 
     let mode = matches.get_one::<String>("mode").unwrap();
+    info!(mode = %mode, "starting thermite");
 
     let default_redis_url = env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string());
     let redis_url = matches.get_one::<String>("redis-url").unwrap_or(&default_redis_url);
@@ -225,7 +246,7 @@ async fn main() -> std::io::Result<()> {
     } else if mode == "fetcher" {
         let _ = start_fetcher(redis_client, http_client, data, tx, rx).await;
     } else {
-        eprintln!("Invalid APP_MODE. Must be 'receiver' or 'fetcher'.");
+        error!(mode = %mode, "invalid APP_MODE; must be 'receiver' or 'fetcher'");
     }
     Ok(())
 }

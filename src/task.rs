@@ -1,9 +1,10 @@
 use std::net::IpAddr;
 use std::str::FromStr;
 
-use serde::{Deserialize, Serialize};
 use chrono::Utc;
 use cron::Schedule;
+use serde::{Deserialize, Serialize};
+use tracing::debug;
 use url::Url;
 
 use crate::errors::TaskQueueError;
@@ -231,7 +232,7 @@ impl BaseTask {
             cron_expression.to_owned()
         };
 
-        println!("Cron schedule for compatibility: {}", cron_schedule);
+        debug!(cron_schedule = %cron_schedule, "normalized cron schedule for periodic task");
 
         let schedule = Schedule::from_str(&cron_schedule)
             .map_err(|e| TaskQueueError::InvalidCronExpression(e.to_string()))?;
@@ -241,7 +242,7 @@ impl BaseTask {
             .next()
             .ok_or_else(|| TaskQueueError::InvalidCronExpression("No upcoming dates found".to_string()))?;
 
-        println!("Next occurrence: {}", next_occurrence);
+        debug!(next_occurrence = %next_occurrence, "computed next periodic execution time");
 
         Ok(next_occurrence.timestamp())
     }

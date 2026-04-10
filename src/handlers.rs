@@ -1,6 +1,7 @@
 use actix_web::{web, HttpRequest, HttpResponse, Responder};
 use serde_json::json;
 use std::sync::Mutex;
+use tracing::{error, info, warn};
 
 use crate::errors::TaskQueueError;
 use crate::queue;
@@ -29,16 +30,23 @@ fn authorize_request(req: &HttpRequest) -> Result<(), HttpResponse> {
 
     match provided_api_key {
         Some(value) if value == configured_api_key => Ok(()),
-        _ => Err(HttpResponse::Unauthorized().json(json!({"error": "Unauthorized"}))),
+        _ => {
+            warn!(path = %req.path(), "unauthorized request rejected");
+            Err(HttpResponse::Unauthorized().json(json!({"error": "Unauthorized"})))
+        }
     }
 }
 
 fn task_error_response(error: TaskQueueError) -> HttpResponse {
     match error {
         TaskQueueError::InvalidCronExpression(_) | TaskQueueError::InvalidTaskTarget(_) => {
+            warn!(error = %error, "task request validation failed");
             HttpResponse::BadRequest().json(json!({"error": error.to_string()}))
         }
-        _ => HttpResponse::InternalServerError().json(json!({"error": error.to_string()})),
+        _ => {
+            error!(error = %error, "task request failed due to a server-side issue");
+            HttpResponse::InternalServerError().json(json!({"error": error.to_string()}))
+        }
     }
 }
 
@@ -59,7 +67,10 @@ pub async fn submit_task(
         }
     };
 
-    match queue::enqueue_task(&redis_client, &task.into_inner()).await {
+    let task = task.into_inner();
+    info!(task_id = %task.id, category = %task.category, path = %req.path(), "received task submission");
+
+    match queue::enqueue_task(&redis_client, &task).await {
         Ok(_) => HttpResponse::Ok().json(json!({"status": "Task submitted"})),
         Err(e) => task_error_response(e),
     }
@@ -82,18 +93,21 @@ pub async fn submit_tasks(
         }
     };
 
+    let tasks = tasks.into_inner();
+    info!(count = tasks.len(), path = %req.path(), "received batch task submission");
+
     let mut submitted = 0usize;
     let mut failures = Vec::new();
     let mut has_server_error = false;
 
-    for task in tasks.into_inner() {
+    for task in tasks {
         match queue::enqueue_task(&redis_client, &task).await {
             Ok(_) => {
-                println!("Task enqueued: {}", task.id);
+                info!(task_id = %task.id, "task enqueued from batch request");
                 submitted += 1;
             }
             Err(e) => {
-                eprintln!("Failed to enqueue task {}: {}", task.id, e);
+                warn!(task_id = %task.id, error = %e, "failed to enqueue task from batch request");
                 if !matches!(e, TaskQueueError::InvalidCronExpression(_) | TaskQueueError::InvalidTaskTarget(_)) {
                     has_server_error = true;
                 }
