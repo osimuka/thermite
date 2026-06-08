@@ -1,98 +1,167 @@
 # Thermite
 
-A high-performance task queue worker and scheduler written in Rust. Thermite processes distributed tasks from a Redis queue with support for both one-time and periodic (cron-scheduled) task execution.
+A lightweight **Redis-backed task scheduler and HTTP worker** written in Rust. Thermite processes distributed tasks with support for both one-time and periodic (cron-scheduled) execution.
 
-## Features
+Thermite accepts tasks over HTTP or fetches them from another service, stores them in Redis, and executes them when they are due by sending an HTTP `POST` request to the target task URL. It also supports **periodic jobs** using cron expressions.
 
-- **Two Operating Modes:**
-  - **Receiver Mode**: Listens for incoming tasks via HTTP POST endpoints and queues them in Redis
-  - **Fetcher Mode**: Periodically fetches tasks from an external source and processes them
-  
-- **Task Management:**
-  - Support for one-time and periodic (cron-scheduled) tasks
-  - Task prioritization and categorization
-  - Asynchronous task execution with configurable arguments
-  - FIFO queue processing via Redis
+## What this tool does
 
-- **Architecture:**
-  - Built with Actix-web for high-performance HTTP handling
-  - Redis-backed distributed task queue
-  - Tokio async runtime for concurrent task execution
-  - Cron expression parsing and scheduling support
-  - RESTful API for task submission
+Thermite runs in one of two modes:
 
-## API Endpoints
+- **`receiver` mode**: exposes an HTTP API for submitting one or more tasks.
+- **`fetcher` mode**: periodically pulls tasks from a remote endpoint and enqueues them.
 
-- `POST /submit-task` - Submit a single task
-- `POST /submit-tasks` - Submit multiple tasks in batch
+Once a task is in Redis, Thermite:
 
-## Configuration
+1. stores it in a sorted set using `scheduled_at` as the score,
+2. polls for due tasks,
+3. executes each due task by `POST`ing to its `task` URL,
+4. re-enqueues periodic tasks with their next cron-based run time.
+5. retries failed deliveries with exponential backoff and eventually moves exhausted tasks to a Redis dead-letter queue.
 
-The application can be configured via environment variables or CLI arguments:
+## Task model
 
-- `REDIS_URL` - Redis server connection URL (default: `redis://localhost:6379`)
-- `TASKS_URL` - HTTP server binding address (default: `127.0.0.1:8080`)
-- `FETCH_URL` - External URL to fetch tasks from (required in fetcher mode)
+Each task contains:
 
-## Running Thermite
+| Field | Description |
+|---|---|
+| `id` | Unique task identifier |
+| `name` | Human-readable task name |
+| `description` | Task description |
+| `category` | `non_periodic` or `periodic` |
+| `priority` | Priority label |
+| `task` | Target URL to call when the task runs |
+| `scheduled_at` | Unix timestamp for the next run |
+| `cron_scheduled_at` | Cron expression used for periodic jobs |
+| `args` | Optional JSON payload passed through to the target URL |
+| `max_retries` | Optional retry limit before the task is moved to the dead-letter queue |
+| `retry_count` | Current retry attempt count tracked by Thermite |
+| `last_error` | Last delivery error recorded for retry/dead-letter inspection |
+
+When a task is executed, Thermite sends a request like:
+
+```json
+{
+  "task_id": "123",
+  "args": {
+    "email": "user@example.com"
+  }
+}
+```
+
+## HTTP API
+
+### `POST /submit-task`
+Submit a single task.
+
+### `POST /submit-tasks`
+Submit multiple tasks in one request.
+
+### `GET /dead-letter-tasks`
+Inspect tasks that exhausted retries and were moved to the dead-letter queue. If `THERMITE_API_KEY` is set, include `x-api-key` or `Authorization: Bearer ...`.
+
+### Example task payload
+
+```json
+{
+  "id": "task-1",
+  "name": "Send reminder",
+  "description": "Send a reminder email",
+  "category": "non_periodic",
+  "priority": "high",
+  "task": "http://localhost:9000/jobs/reminder",
+  "scheduled_at": 1893456000,
+  "cron_scheduled_at": "0 0 * * *",
+  "args": {
+    "user_id": 42,
+    "channel": "email"
+  }
+}
+```
+
+## Running locally
+
+### With Docker Compose
 
 ```bash
-# Receiver mode (listen for HTTP requests)
-cargo run -- --mode receiver --redis-url redis://localhost:6379 --tasks-url 0.0.0.0:8080
+docker compose up --build
+```
 
-# Fetcher mode (periodically fetch from external source)
+This starts:
+
+- the Thermite worker on `http://localhost:8080`
+- Redis on `localhost:6379`
+
+### With Cargo
+
+```bash
+cargo run -- --mode receiver --redis-url redis://localhost:6379
+```
+
+To run in fetcher mode:
+
+```bash
+export FETCH_URL=http://localhost:8000/api/tasks/periodic
 cargo run -- --mode fetcher --redis-url redis://localhost:6379
 ```
 
-## Heroku Container Deployment Steps
+## Configuration
 
-1. Install Heroku CLI
-2. Login to Heroku
-3. Login to Heroku Container Registry
+Thermite uses these environment variables and CLI options:
+
+| Name | Purpose | Default |
+|---|---|---|
+| `REDIS_URL` | Redis connection string | `redis://localhost:6379` |
+| `TASKS_URL` | Address the HTTP server binds to in `receiver` mode | `127.0.0.1:8080` |
+| `FETCH_URL` | Endpoint to poll for tasks in `fetcher` mode | required for fetcher |
+| `THERMITE_API_KEY` | Optional API key required on `POST /submit-task` and `POST /submit-tasks` via `x-api-key` or `Authorization: Bearer ...` | unset |
+| `THERMITE_ALLOWED_HOSTS` | Optional comma-separated allowlist of task target hosts/domains such as `jobs.example.com,hooks.example.org` | unset |
+| `THERMITE_REQUIRE_HTTPS` | If set to `true`, `1`, `yes`, or `on`, only `https://` task targets are accepted | unset |
+| `THERMITE_MAX_RETRIES` | Default retry count before a failed task is moved to the Redis dead-letter queue | `3` |
+| `THERMITE_RETRY_BASE_DELAY_SECS` | Base retry delay in seconds; Thermite applies exponential backoff from this value | `30` |
+| `RUST_LOG` | Log level / filter for structured logs, e.g. `info` or `thermite=debug,actix_web=info` | `info` |
+| `--mode` | Run mode: `receiver` or `fetcher` | `receiver` |
+
+## Typical workflow
+
+1. Submit or fetch tasks.
+2. Thermite stores them in Redis.
+3. When `scheduled_at` is due, Thermite executes the target URL.
+4. If the task is `periodic`, it computes the next run from `cron_scheduled_at` and requeues it.
+5. If execution keeps failing after the configured retries, the task is stored in `dead_letter_queue` and can be reviewed via `GET /dead-letter-tasks`.
+
+## Heroku container deployment
+
+1. Install the Heroku CLI and log in:
 
 ```bash
 heroku login
 heroku container:login
 ```
 
-4. Create a Heroku app
+2. Create the app:
 
 ```bash
 heroku create thermite
 ```
 
-5. Build the Docker image
+3. Build and push the image:
 
 ```bash
 docker build --platform linux/amd64 -t registry.heroku.com/thermite/worker .
-```
-
-6. Push the Docker image to Heroku Container Registry
-
-```bash
 docker push registry.heroku.com/thermite/worker
 ```
 
-7. Set the stack to container
+4. Set the stack and release:
 
 ```bash
 heroku stack:set container -a thermite
-```
-
-7. Release the Docker image
-
-```bash
 heroku container:release worker -a thermite
 ```
 
-8. Open the Heroku app
+5. Open the app or inspect logs:
 
 ```bash
 heroku open -a thermite
-```
-
-9. View the logs
-
-```bash
 heroku logs --tail -a thermite
 ```

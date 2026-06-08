@@ -18,4 +18,13 @@ pub enum TaskQueueError {
 
     #[error("Serialization error: {0}")]
     SerializationError(String),
+
+    #[error("Invalid cron expression: {0}")]
+    InvalidCronExpression(String),
+
+    #[error("Invalid task target: {0}")]
+    InvalidTaskTarget(String),
+
+    #[error("Application state error: {0}")]
+    StateError(String),
 }

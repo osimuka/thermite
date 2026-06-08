@@ -1,21 +1,24 @@
-use redis::AsyncCommands;
-use crate::task::BaseTask;
-use crate::errors::TaskQueueError;
 use chrono::Utc;
+use redis::AsyncCommands;
+use tracing::{debug, error, info, warn};
+
+use crate::errors::TaskQueueError;
+use crate::task::BaseTask;
 
 
 pub async fn enqueue_task(client: &redis::Client, task: &BaseTask) -> Result<(), TaskQueueError> {
-    let mut conn = client.get_multiplexed_async_connection().await.expect("Failed to connect to Redis");
-    let task_json = serde_json::to_string(&task).expect("Failed to serialize task");
+    task.validate()?;
 
-    println!("Enqueuing task: {}", task_json);
+    let mut conn = client.get_multiplexed_async_connection().await?;
+    let task_json = serde_json::to_string(task)?;
 
-    // Add the task to the queue
+    info!(task_id = %task.id, scheduled_at = task.scheduled_at, category = %task.category, "enqueuing task");
+
     let was_set: bool = conn.zadd("task_queue", task_json, task.scheduled_at).await?;
     if !was_set {
-        println!("Task {} already exists, not enqueued again", task.id);
+        info!(task_id = %task.id, "task already existed in queue");
     } else {
-        println!("Enqueued task: {}", task.id);
+        info!(task_id = %task.id, "task enqueued");
     }
     Ok(())
 }
@@ -28,40 +31,71 @@ async fn get_task(mut conn: redis::aio::MultiplexedConnection, now: i64) -> redi
 }
 
 pub async fn dequeue_task(client: &redis::Client) -> Result<Option<BaseTask>, TaskQueueError> {
-    let mut conn = client.get_multiplexed_async_connection().await.expect("Failed to connect to Redis");
-    // Get the current time as a Unix timestamp
+    let mut conn = client.get_multiplexed_async_connection().await?;
     let now = Utc::now().timestamp() as u64;
-    println!("Current timestamp: {}", now);
-    // get first task from the queue based on the score (timestamp)
-    let task_str = get_task(conn.clone(), now as i64).await?;
-    let task: Option<BaseTask> = match task_str {
-        Some(ref task_str) => {
-            println!("Task string: {:?}", task_str);
-            let task: BaseTask = serde_json::from_str(&task_str).expect("Failed to deserialize task");
-            Some(task)
-        }
-        None => None,
+    debug!(now, "checking queue for due tasks");
+
+    let task_str = match get_task(conn.clone(), now as i64).await? {
+        Some(task_str) => task_str,
+        None => return Ok(None),
     };
 
-    println!("Task: {:?}", task);
+    let task: BaseTask = serde_json::from_str(&task_str)?;
 
-    if task.is_none() {
-        return Ok(None)
+    let _: () = conn.zrem("task_queue", &task_str).await?;
+    info!(task_id = %task.id, category = %task.category, "dequeued task");
+
+    if task.category == "periodic" && !task.is_retry {
+        let mut rescheduled_task = task.clone();
+        rescheduled_task.set_next_unix_datetime()?;
+        let task_json = serde_json::to_string(&rescheduled_task)?;
+        let _: () = conn.zadd("task_queue", task_json, rescheduled_task.scheduled_at).await?;
+        info!(task_id = %rescheduled_task.id, next_scheduled_at = rescheduled_task.scheduled_at, "rescheduled periodic task");
     }
 
-    // Remove the task from the queue
-    let _: () = conn.zrem("task_queue", &task_str.unwrap()).await?;
-    println!("Dequeued task: {:?}", task);
+    Ok(Some(task))
+}
 
-    // Remove the task from the queue only if its not periodic
-    if task.as_ref().unwrap().category == "periodic" {
-        let mut task = task.clone().unwrap();
-        task.set_next_unix_datetime();
-        let task_json = serde_json::to_string(&task).expect("Failed to serialize task");
-        let _: () = conn.zadd("task_queue", task_json, task.scheduled_at).await?;
-        println!("Updated task: {:?}", task);
+pub async fn handle_task_failure(
+    client: &redis::Client,
+    task: &BaseTask,
+    error_message: &str,
+) -> Result<(), TaskQueueError> {
+    let mut conn = client.get_multiplexed_async_connection().await?;
+    let mut failed_task = task.clone();
+
+    if failed_task.schedule_retry(error_message) {
+        let task_json = serde_json::to_string(&failed_task)?;
+        let _: () = conn
+            .zadd("task_queue", task_json, failed_task.scheduled_at)
+            .await?;
+        warn!(
+            task_id = %failed_task.id,
+            retry_count = failed_task.retry_count,
+            scheduled_at = failed_task.scheduled_at,
+            "requeued failed task for retry"
+        );
+    } else {
+        let task_json = serde_json::to_string(&failed_task)?;
+        let _: () = conn.rpush("dead_letter_queue", task_json).await?;
+        error!(
+            task_id = %failed_task.id,
+            retry_count = failed_task.retry_count,
+            "moved task to dead-letter queue after exhausting retries"
+        );
     }
-    Ok(task)
+
+    Ok(())
+}
+
+pub async fn get_dead_letter_tasks(client: &redis::Client) -> Result<Vec<BaseTask>, TaskQueueError> {
+    let mut conn = client.get_multiplexed_async_connection().await?;
+    let entries: Vec<String> = conn.lrange("dead_letter_queue", 0, -1).await?;
+
+    entries
+        .into_iter()
+        .map(|entry| serde_json::from_str(&entry).map_err(TaskQueueError::from))
+        .collect()
 }
 
 pub async fn clear_task_queue(client: &redis::Client) -> Result<(), TaskQueueError> {
