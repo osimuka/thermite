@@ -1,6 +1,6 @@
-# thermite
+# Thermite
 
-A lightweight **Redis-backed task scheduler and HTTP worker** written in Rust.
+A lightweight **Redis-backed task scheduler and HTTP worker** written in Rust. Thermite processes distributed tasks with support for both one-time and periodic (cron-scheduled) execution.
 
 Thermite accepts tasks over HTTP or fetches them from another service, stores them in Redis, and executes them when they are due by sending an HTTP `POST` request to the target task URL. It also supports **periodic jobs** using cron expressions.
 
