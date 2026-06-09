@@ -81,6 +81,10 @@ Inspect tasks that exhausted retries and were moved to the dead-letter queue. If
 
 ## Running locally
 
+### Redis Version Requirements
+
+Thermite requires **Redis 5.0 or higher**. Redis 5.0+ provides support for sorted sets and streams that Thermite depends on for task scheduling and queue management.
+
 ### With Docker Compose
 
 ```bash
@@ -121,6 +125,32 @@ Thermite uses these environment variables and CLI options:
 | `THERMITE_RETRY_BASE_DELAY_SECS` | Base retry delay in seconds; Thermite applies exponential backoff from this value | `30` |
 | `RUST_LOG` | Log level / filter for structured logs, e.g. `info` or `thermite=debug,actix_web=info` | `info` |
 | `--mode` | Run mode: `receiver` or `fetcher` | `receiver` |
+
+## Security
+
+Thermite implements multiple layers of security to protect task execution and data integrity:
+
+### Layer 1: API Authentication
+- **API Key Protection**: Set `THERMITE_API_KEY` to require authentication on task submission endpoints (`/submit-task`, `/submit-tasks`)
+- **Authorization Methods**: Supports both `x-api-key` header and `Authorization: Bearer <token>` formats
+- **Impact**: Prevents unauthorized task submission and ensures only trusted clients can enqueue tasks
+
+### Layer 2: Host & Protocol Validation
+- **Host Allowlisting**: Use `THERMITE_ALLOWED_HOSTS` to restrict task execution to a whitelist of approved domains (e.g., `jobs.example.com,hooks.example.org`)
+- **HTTPS Enforcement**: Enable `THERMITE_REQUIRE_HTTPS=true` to reject any task with non-HTTPS target URLs
+- **Impact**: Prevents execution of tasks pointing to untrusted or internal hosts, protects against SSRF attacks
+
+### Layer 3: Redis Security
+- **Secure Connection**: Always use `redis://` with TLS support or `rediss://` for production deployments
+- **Redis ACL**: Configure Redis username and password in the connection string (e.g., `redis://user:password@host:6379`)
+- **Network Isolation**: Keep Redis on a private network, not exposed to the public internet
+- **Impact**: Prevents unauthorized access to task queues and sensitive task data
+
+### Layer 4: Task Data Protection
+- **Payload Encryption**: Encrypt sensitive arguments in the `args` field at the application level before submission
+- **Audit Logging**: Use `RUST_LOG` with appropriate level (e.g., `thermite=info`) to monitor task execution
+- **Dead-Letter Queue Access**: Protect access to `GET /dead-letter-tasks` endpoint with API key authentication
+- **Impact**: Protects sensitive task parameters and enables compliance auditing
 
 ## Typical workflow
 
